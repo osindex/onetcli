@@ -52,6 +52,10 @@
 
 **主题与国际化** — 亮色 / 暗色模式切换，支持 English、简体中文、繁体中文。
 
+## 发布
+
+构建产物通过 GitHub Actions 的 tag 触发发布（`v*`）。发版流程和所需 Secrets 说明见 [`CONTRIBUTING.md`](CONTRIBUTING.md)。
+
 ## 应用截图
 
 | 数据库 | SSH |

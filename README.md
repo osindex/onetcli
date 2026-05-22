@@ -46,6 +46,10 @@
 
 **Themes & i18n** — Light / dark mode. Supports English, Simplified Chinese, and Traditional Chinese.
 
+## Releases
+
+Build artifacts are published via GitHub Actions on tagged releases (`v*`). See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the release workflow and required secrets.
+
 ## Screenshots
 
 | Database | SSH |
@@ -107,6 +111,49 @@ Thanks to [ferrum-flow](https://github.com/tu6ge/ferrum-flow.git).
 cargo run -p main
 ```
 
+### Local Development Environment
+
+The app reads configuration from standard environment variables at runtime, and it can also read Supabase settings from a local config file.
+
+For local development, you can either export variables directly or place a file in the user config directory:
+
+- Windows: `%APPDATA%\one-hub\settings.json`
+- macOS / Linux: `~/.config/one-hub/settings.json`
+
+Example file format: `supabase.example.json`
+
+Email template: `docs/supabase-email-otp-template.html`
+
+LLM provider templates:
+
+- `OpenAI` for OpenAI-style APIs (`https://api.openai.com/v1`)
+- `OpenAICompatible` for third-party OpenAI-compatible gateways
+- `Anthropic` for Anthropic official API (`https://api.anthropic.com`)
+- `Ollama` for local Ollama (`http://localhost:11434`)
+
+Logging:
+
+- Set `log_level` in `settings.json` to `info`, `debug`, `warn`, `error`, or `trace`
+
+If you prefer shell variables, copy the example file and load it into your shell:
+
+```bash
+cp .env.example .env.local
+set -a
+. ./.env.local
+set +a
+```
+
+On PowerShell, you can set the variables in the current session instead:
+
+```powershell
+$env:RUST_LOG = "info"
+$env:SUPABASE_URL = "https://xxx.supabase.co"
+$env:SUPABASE_ANON_KEY = "eyJ..."
+$env:ONETCLI_UPDATE_URL = "https://example.com/update"
+$env:ONETCLI_UPDATE_DOWNLOAD_URL = "https://example.com/download"
+```
+
 ### macOS Troubleshooting
 
 If macOS blocks the app from opening after installing the DMG ("Apple cannot check it for malicious software"), run:
@@ -134,6 +181,14 @@ cargo clippy -- --deny warnings
 # Format check
 cargo fmt --check
 ```
+
+If you need cloud sync or update checks during development, set these variables before launching the app:
+
+- `SUPABASE_URL`
+- `SUPABASE_ANON_KEY`
+- `ONETCLI_UPDATE_URL`
+- `ONETCLI_UPDATE_DOWNLOAD_URL`
+- `RUST_LOG`
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the full development guide.
 

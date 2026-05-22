@@ -38,6 +38,35 @@ For Windows, you can run the following command in PowerShell:
 .\script\install-window.ps1
 ```
 
+### Environment variables
+
+For local development, you can either place `supabase.json` in the current startup directory (preferred), in your user config directory, or export the variables in your shell before running the app.
+
+Local config path:
+
+- Current startup directory: `one-hub/supabase.json`
+- Windows: `%APPDATA%\one-hub\supabase.json`
+- macOS / Linux: `~/.config/one-hub/supabase.json`
+
+Template: `supabase.example.json`
+
+Email template: `docs/supabase-email-otp-template.html`
+
+```bash
+cp .env.example .env.local
+set -a
+. ./.env.local
+set +a
+```
+
+The most common ones are:
+
+- `RUST_LOG`
+- `SUPABASE_URL`
+- `SUPABASE_ANON_KEY`
+- `ONETCLI_UPDATE_URL`
+- `ONETCLI_UPDATE_DOWNLOAD_URL`
+
 ### Run story
 
 There are a lot of UI test cases in the `crates/story` folder, if you change the existing features you can run the tests to make sure they are working.
@@ -119,4 +148,26 @@ When we are ready to release a new version, please follow the steps below:
    git push origin vx.y.z
    ```
 
-4. Then GitHub Actions will automatically publish the crates to crates.io and create a new release in GitHub.
+4. Then GitHub Actions will automatically build the desktop release artifacts and create a new GitHub Release.
+
+### Release workflow secrets
+
+Before tagging a release in your own fork/repository, configure these GitHub Secrets so the workflow can build and embed runtime configuration:
+
+- `SUPABASE_URL`
+- `SUPABASE_ANON_KEY`
+- `ONETCLI_UPDATE_URL`
+- `ONETCLI_UPDATE_DOWNLOAD_URL`
+- any optional QR-code or sponsor-related secrets referenced by `.github/workflows/release.yml`
+
+The workflow is safe to push to your own fork/repository. Just add the same secrets in your repo settings under **Settings → Secrets and variables → Actions**. If a required secret is missing, the workflow fails early with a clear error.
+
+### Release artifacts
+
+The release workflow currently publishes:
+
+- Windows: `.zip`
+- macOS: `.tar.gz` + `.dmg`
+- Linux: `.tar.gz`
+
+If you want a Windows `.msi`, it needs an additional installer toolchain (not currently in the repo).
