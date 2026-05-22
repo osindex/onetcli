@@ -102,7 +102,7 @@ The workspace has four default members (`crates/ui`, `crates/story`, `crates/ass
 The startup sequence in `main/src/main.rs` and `main/src/onetcli_app.rs` is order-sensitive:
 
 1. `update::handle_update_command()` — handle self-update CLI commands
-2. `load_env_files()` — load `.env.local` / `.env` from CWD + exe directory + Resources
+2. Environment variables are read directly from the shell or compile-time injection (`SUPABASE_URL`, `SUPABASE_ANON_KEY`, `ONETCLI_UPDATE_URL`, `ONETCLI_UPDATE_DOWNLOAD_URL`, `RUST_LOG`)
 3. `Application::new().with_assets(Assets)` — create app with bundled assets
 4. `onetcli_app::init(cx)` — tracing, HTTP client, then subsystem init:
    - `gpui_component::init(cx)` — **must be called before any UI component usage**
@@ -161,9 +161,9 @@ Text input based on Rope (`ropey` crate) with:
 
 ## Configuration
 
-- **Environment files**: `.env.local` (priority) → `.env` (fallback), loaded from CWD + exe directory + macOS Resources directory
+- **Environment files**: no automatic dotenv loading in the current codebase; use shell environment variables or `supabase.json` in the user config directory for local development
 - **Build-time config**: `SUPABASE_URL`, `SUPABASE_ANON_KEY` can be baked in at compile time, overridden at runtime
-- **Update URL**: `ONETCLI_UPDATE_URL` env var
+- **Update URL**: `ONETCLI_UPDATE_URL`, `ONETCLI_UPDATE_DOWNLOAD_URL` env vars
 - **Log level**: `RUST_LOG` env var (default: `info`)
 
 ## Language Convention
