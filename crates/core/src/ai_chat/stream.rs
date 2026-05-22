@@ -12,7 +12,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::llm::manager::GlobalProviderState;
 use crate::llm::storage::ProviderRepository;
-use crate::llm::{ChatRequest, Message, extract_stream_text};
+use crate::llm::{ChatRequest, Message, debug_llm_request, extract_stream_text};
 use crate::storage::StorageManager;
 use crate::storage::traits::Repository;
 
@@ -211,6 +211,13 @@ impl ChatStreamProcessor {
             stream: Some(true),
             ..Default::default()
         };
+
+        debug_llm_request(
+            "ai_chat.stream",
+            &provider_config,
+            &request,
+            format!("provider_id={provider_id}"),
+        );
 
         let provider = global_provider_state
             .manager()

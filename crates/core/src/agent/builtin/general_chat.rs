@@ -5,7 +5,7 @@ use futures::StreamExt;
 use tokio::sync::mpsc;
 
 use crate::agent::types::{Agent, AgentContext, AgentDescriptor, AgentEvent, AgentResult};
-use crate::llm::{ChatRequest, Message, Role, extract_stream_text};
+use crate::llm::{ChatRequest, Message, Role, debug_llm_request, extract_stream_text};
 
 static DESCRIPTOR: AgentDescriptor = AgentDescriptor {
     id: "general_chat",
@@ -59,6 +59,13 @@ impl GeneralChatAgent {
             stream: Some(true),
             ..Default::default()
         };
+
+        debug_llm_request(
+            "agent.general_chat",
+            &ctx.provider_config,
+            &request,
+            "GeneralChatAgent::run",
+        );
 
         // Obtain the LLM provider via the context's provider state.
         let provider = ctx

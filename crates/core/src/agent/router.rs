@@ -1,6 +1,6 @@
 use tokio_util::sync::CancellationToken;
 
-use crate::llm::{ChatRequest, LlmProvider, Message, ProviderConfig, Role};
+use crate::llm::{ChatRequest, LlmProvider, Message, ProviderConfig, Role, debug_llm_request};
 
 use super::types::DynAgent;
 
@@ -79,6 +79,13 @@ impl IntentRouter {
             stream: Some(false),
             ..Default::default()
         };
+
+        debug_llm_request(
+            "agent.router",
+            provider_config,
+            &request,
+            format!("agent_count={}", agent_ids.len()),
+        );
 
         let response = tokio::select! {
             _ = cancel_token.cancelled() => {

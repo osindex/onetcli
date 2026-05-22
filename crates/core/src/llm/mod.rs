@@ -27,6 +27,46 @@ pub fn extract_stream_text(response: &StreamingResponse) -> Option<&str> {
     })
 }
 
+/// Debug-only LLM 请求日志，避免在普通日志级别刷屏。
+pub fn debug_llm_request(
+    scope: &str,
+    provider: &ProviderConfig,
+    request: &ChatRequest,
+    extra: impl AsRef<str>,
+) {
+    if !tracing::enabled!(tracing::Level::DEBUG) {
+        return;
+    }
+
+    let api_base = provider.api_base.as_deref().unwrap_or("<default>");
+    let api_key_state = if provider
+        .api_key
+        .as_deref()
+        .map(|v| !v.trim().is_empty())
+        .unwrap_or(false)
+    {
+        "set"
+    } else {
+        "empty"
+    };
+
+    tracing::debug!(
+        target: "onetcli::llm::request",
+        scope = scope,
+        provider_type = %provider.provider_type.as_str(),
+        provider_name = %provider.name,
+        model = %request.model,
+        api_base = %api_base,
+        api_key = api_key_state,
+        message_count = request.messages.len(),
+        stream = request.stream.unwrap_or(false),
+        max_tokens = request.max_tokens.unwrap_or_default(),
+        temperature = request.temperature.unwrap_or_default(),
+        extra = extra.as_ref(),
+        "LLM request debug"
+    );
+}
+
 pub fn init(cx: &mut App) {
     storage::init(cx);
     let state = GlobalProviderState::new();
