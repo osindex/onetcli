@@ -1,0 +1,61 @@
+{
+  "supabase_url": "https://*.supabase.co",
+  "supabase_anon_key": "<paste-your-anon-key-here>",
+  "log_level": "info",
+  "update_url": "",
+  "update_download_url": "",
+  "llm_providers": [
+    {
+      "name": "OpenAI",
+      "provider_type": "OpenAI",
+      "api_key": "<openai-api-key>",
+      "api_base": "https://api.openai.com/v1",
+      "api_version": "",
+      "model": "gpt-4o-mini",
+      "models": ["gpt-4o-mini"],
+      "max_tokens": 4096,
+      "temperature": 0.7,
+      "enabled": true,
+      "is_default": true
+    },
+    {
+      "name": "Anthropic",
+      "provider_type": "Anthropic",
+      "api_key": "<anthropic-api-key>",
+      "api_base": "https://api.anthropic.com",
+      "api_version": "",
+      "model": "claude-3-5-sonnet-latest",
+      "models": ["claude-3-5-sonnet-latest"],
+      "max_tokens": 4096,
+      "temperature": 0.7,
+      "enabled": true,
+      "is_default": false
+    },
+    {
+      "name": "Ollama",
+      "provider_type": "Ollama",
+      "api_key": "",
+      "api_base": "http://localhost:11434",
+      "api_version": "",
+      "model": "llama3.1",
+      "models": ["llama3.1"],
+      "max_tokens": 4096,
+      "temperature": 0.7,
+      "enabled": true,
+      "is_default": false
+    },
+    {
+      "name": "OpenAI Compatible Gateway",
+      "provider_type": "OpenAICompatible",
+      "api_key": "<gateway-api-key>",
+      "api_base": "https://cpa.web3tm.top/api/v1",
+      "api_version": "",
+      "model": "gpt-4o-mini",
+      "models": ["gpt-4o-mini"],
+      "max_tokens": 4096,
+      "temperature": 0.7,
+      "enabled": true,
+      "is_default": false
+    }
+  ]
+}
