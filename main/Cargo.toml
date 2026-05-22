@@ -36,6 +36,8 @@ one-ui.workspace = true
 reqwest_client.workspace = true
 db.workspace = true
 global-hotkey.workspace = true
+tray-icon.workspace = true
+image = { workspace = true }
 sha2 = { workspace = true }
 flate2 = "1"
 tar = "0.4"
