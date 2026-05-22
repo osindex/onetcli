@@ -259,6 +259,25 @@ impl LicenseService {
         Ok(license)
     }
 
+    /// 将当前登录用户标记为 Pro。
+    pub fn set_logged_in_pro(&self, user_id: String) -> Result<LicenseInfo, LicenseError> {
+        let license = LicenseInfo::new(user_id, PlanTier::Pro, None);
+
+        if let Ok(mut guard) = self.online_license.write() {
+            *guard = Some(license.clone());
+        }
+
+        self.storage.save(&license)?;
+
+        tracing::info!(
+            "[License] 登录后默认启用 Pro: plan={:?}, features={:?}",
+            license.plan,
+            license.features
+        );
+
+        Ok(license)
+    }
+
     /// 设置为免费用户（用于未登录状态）
     pub fn set_free(&self) {
         if let Ok(mut guard) = self.online_license.write() {

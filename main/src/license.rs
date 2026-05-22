@@ -76,6 +76,25 @@ pub fn is_feature_enabled(feature: Feature, cx: &App) -> bool {
     }
 }
 
+/// 当前计划名称。
+pub fn current_plan(cx: &App) -> &'static str {
+    if let Some(global) = cx.try_global::<GlobalLicenseService>() {
+        match global.0.get_plan() {
+            one_core::license::PlanTier::Pro => "Pro",
+            one_core::license::PlanTier::Free => "Free",
+        }
+    } else {
+        "Free"
+    }
+}
+
+/// 登录后默认提升为 Pro（本地兜底）。
+pub fn set_logged_in_as_pro(cx: &App, user_id: String) {
+    if let Some(global) = cx.try_global::<GlobalLicenseService>() {
+        let _ = global.0.set_logged_in_pro(user_id);
+    }
+}
+
 // ============================================================================
 // 升级提示对话框
 // ============================================================================
