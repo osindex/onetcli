@@ -46,7 +46,7 @@ use crate::auth::{AuthService, show_auth_dialog};
 use crate::home::home_connection_quick_open::ConnectionQuickOpenDelegate;
 use crate::home::home_strategy::build_connection_open_strategy;
 use crate::home::home_workspace_filter::{WorkspaceFilterDelegate, show_workspace_dialog};
-use crate::license::{get_license_service, is_feature_enabled, show_upgrade_dialog};
+use crate::license::{get_license_service, is_feature_enabled, set_logged_in_as_pro, show_upgrade_dialog};
 use crate::new_connection::NewConnectionWindow;
 use crate::setting_tab::GlobalCurrentUser;
 use crate::user_avatar::render_user_avatar;
@@ -721,8 +721,12 @@ impl HomePage {
 
                     // 更新 License
                     let license_service = get_license_service(cx);
-                    if let Err(e) = license_service.update_from_subscription(user.id, subscription)
-                    {
+                    if let Err(e) = if let Some(subscription) = subscription {
+                        license_service.update_from_subscription(user.id.clone(), Some(subscription))
+                    } else {
+                        set_logged_in_as_pro(cx, user.id.clone());
+                        Ok(license_service.get_license().unwrap())
+                    } {
                         tracing::warn!("更新 License 失败: {}", e);
                     }
 
@@ -767,9 +771,12 @@ impl HomePage {
 
                         // 更新 License
                         let license_service = get_license_service(cx);
-                        if let Err(e) =
-                            license_service.update_from_subscription(user.id, subscription)
-                        {
+                        if let Err(e) = if let Some(subscription) = subscription {
+                            license_service.update_from_subscription(user.id.clone(), Some(subscription))
+                        } else {
+                            set_logged_in_as_pro(cx, user.id.clone());
+                            Ok(license_service.get_license().unwrap())
+                        } {
                             tracing::warn!("更新 License 失败: {}", e);
                         }
 
