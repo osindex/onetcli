@@ -96,18 +96,23 @@ impl ProviderRepository {
     }
 
     pub fn ensure_onetcli_provider(&self) -> Result<ProviderConfig> {
-        // 先查找已有的 OnetCli 类型 provider
-        if let Ok(list) = self.list() {
-            if let Some(mut existing) = list
-                .into_iter()
-                .find(|p| p.provider_type == ProviderType::OnetCli)
-            {
-                if !existing.enabled {
-                    existing.enabled = true;
-                    let _ = self.update(&existing);
-                }
-                return Ok(existing);
+        // 只有在当前 provider 表为空时，才从 settings 补一个 OnetCli AI
+        let list = self.list()?;
+
+        if let Some(mut existing) = list
+            .iter()
+            .cloned()
+            .find(|p| p.provider_type == ProviderType::OnetCli)
+        {
+            if !existing.enabled {
+                existing.enabled = true;
+                let _ = self.update(&existing);
             }
+            return Ok(existing);
+        }
+
+        if !list.is_empty() {
+            return Err(anyhow::anyhow!("provider list already exists"));
         }
 
         // 不存在则创建

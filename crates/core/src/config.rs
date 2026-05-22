@@ -1,11 +1,14 @@
 //! 应用配置模块
 //!
 //! 通过 `build.rs` 在编译时将环境变量内嵌到二进制文件中，
-//! 运行时也可通过同名环境变量覆盖。
+//! 运行时也可通过同名环境变量覆盖，也可以从用户配置目录读取。
 //!
 //! # 配置优先级
 //! 1. 运行时环境变量（最高优先级，用于开发调试）
-//! 2. 编译时环境变量（发布版本内置，由 build.rs 通过 cargo:rustc-env 注入）
+//! 2. 用户配置文件（`$CONFIG/one-hub/settings.json`）
+//! 3. 当前启动目录下的旧配置文件（`./one-hub/supabase.json`，兼容旧版本）
+//! 4. 用户配置目录下的旧配置文件（`$CONFIG/one-hub/supabase.json`，兼容旧版本）
+//! 5. 编译时环境变量（发布版本内置，由 build.rs 通过 cargo:rustc-env 注入）
 //!
 //! # 发版构建
 //! ```bash
@@ -14,6 +17,35 @@
 //! cargo build --release
 //! ```
 
+use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
+
+use crate::storage::manager::get_config_dir;
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct AppSettingsConfigFile {
+    #[serde(default)]
+    supabase_url: String,
+    #[serde(default)]
+    supabase_anon_key: String,
+    #[serde(default)]
+    update_url: String,
+    #[serde(default)]
+    update_download_url: String,
+}
+
+impl AppSettingsConfigFile {
+    fn config_path() -> Option<PathBuf> {
+        get_config_dir().ok().map(|dir| dir.join("settings.json"))
+    }
+
+    fn load() -> Option<Self> {
+        let path = Self::config_path()?;
+        let content = std::fs::read_to_string(path).ok()?;
+        serde_json::from_str(&content).ok()
+    }
+}
+
 /// Supabase 配置
 #[derive(Debug, Clone)]
 pub struct SupabaseConfig {
@@ -21,6 +53,12 @@ pub struct SupabaseConfig {
     pub project_url: String,
     /// API Key (anon key)
     pub api_key: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SupabaseConfigFile {
+    project_url: String,
+    api_key: String,
 }
 
 /// 应用更新配置
@@ -37,10 +75,33 @@ impl UpdateConfig {
     ///
     /// 优先级：运行时环境变量 > 编译时环境变量
     pub fn get() -> Self {
+        if let Some(file_config) = Self::from_settings_file() {
+            return file_config;
+        }
+
         Self {
             update_url: Self::get_update_url(),
             download_url: Self::get_download_url(),
         }
+    }
+
+    fn from_settings_file() -> Option<Self> {
+        let settings = AppSettingsConfigFile::load()?;
+        let update_url = settings.update_url.trim().to_string();
+        let download_url = settings.update_download_url.trim().to_string();
+
+        if update_url.is_empty() {
+            return None;
+        }
+
+        Some(Self {
+            update_url,
+            download_url: if download_url.is_empty() {
+                None
+            } else {
+                Some(download_url)
+            },
+        })
     }
 
     /// 获取更新接口地址
@@ -88,19 +149,61 @@ impl Default for UpdateConfig {
 impl SupabaseConfig {
     /// 获取 Supabase 配置
     ///
-    /// 优先级：运行时环境变量 > 编译时环境变量
+    /// 优先级：运行时环境变量 > 当前启动目录配置文件 > 用户配置目录配置文件 > 编译时环境变量
     pub fn get() -> Self {
+        if let Some(settings) = AppSettingsConfigFile::load() {
+            let project_url = settings.supabase_url.trim().to_string();
+            let api_key = settings.supabase_anon_key.trim().to_string();
+            if !project_url.is_empty() && !api_key.is_empty() {
+                return Self { project_url, api_key };
+            }
+        }
+
+        if let Some(config) = Self::from_file_candidates() {
+            return config;
+        }
+
         Self {
             project_url: Self::get_url(),
             api_key: Self::get_api_key(),
         }
     }
 
+    fn from_file_candidates() -> Option<Self> {
+        for path in Self::config_paths() {
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                if let Ok(file_config) = serde_json::from_str::<SupabaseConfigFile>(&content) {
+                    let project_url = file_config.project_url.trim().to_string();
+                    let api_key = file_config.api_key.trim().to_string();
+
+                    if !project_url.is_empty() && !api_key.is_empty() {
+                        return Some(Self { project_url, api_key });
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    fn config_paths() -> Vec<std::path::PathBuf> {
+        let mut paths = Vec::new();
+
+        if let Ok(cwd) = std::env::current_dir() {
+            paths.push(cwd.join("one-hub").join("supabase.json"));
+        }
+
+        if let Some(config_dir) = dirs::config_dir() {
+            paths.push(config_dir.join("one-hub").join("supabase.json"));
+        }
+
+        paths
+    }
+
     /// 获取项目 URL
     fn get_url() -> String {
-        // 运行时环境变量优先
         if let Ok(url) = std::env::var("SUPABASE_URL") {
-            if !url.is_empty() {
+            if !url.trim().is_empty() {
                 return url;
             }
         }
@@ -111,9 +214,8 @@ impl SupabaseConfig {
 
     /// 获取 API Key
     fn get_api_key() -> String {
-        // 运行时环境变量优先
         if let Ok(key) = std::env::var("SUPABASE_ANON_KEY") {
-            if !key.is_empty() {
+            if !key.trim().is_empty() {
                 return key;
             }
         }
