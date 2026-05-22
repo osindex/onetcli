@@ -679,6 +679,22 @@ Settings:
         en: Leave empty to write logs to the default config directory logs folder. Restart the app after changing this path.
         zh-CN: 留空时写入默认配置目录下的 logs 文件夹，修改后重启应用生效。
         zh-HK: 留空時寫入默認配置目錄下的 logs 文件夾，修改後重啟應用生效。
+      level:
+        en: Log Level
+        zh-CN: 日志等级
+        zh-HK: 日誌等級
+      level_desc:
+        en: Use info/debug/warn/error/trace. Lower levels show more details.
+        zh-CN: 可填写 info/debug/warn/error/trace，级别越低，输出越详细。
+        zh-HK: 可填寫 info/debug/warn/error/trace，級別越低，輸出越詳細。
+      close_behavior:
+        en: Close Behavior
+        zh-CN: 关闭行为
+        zh-HK: 關閉行為
+      close_behavior_desc:
+        en: Minimize, quit directly, or prompt before closing.
+        zh-CN: 最小化、直接退出，或关闭前提示。
+        zh-HK: 最小化、直接退出，或關閉前提示。
 
     Update:
       group_title:
@@ -693,6 +709,38 @@ Settings:
         en: Automatically check for updates when the application starts
         zh-CN: 应用启动时自动检查新版本
         zh-HK: 應用啟動時自動檢查新版本
+      supabase_url:
+        en: Supabase URL
+        zh-CN: Supabase 地址
+        zh-HK: Supabase 地址
+      supabase_url_desc:
+        en: Leave empty to use the built-in default or environment variable.
+        zh-CN: 留空则使用内置默认值或环境变量。
+        zh-HK: 留空則使用內置默認值或環境變量。
+      supabase_anon_key:
+        en: Supabase Anon Key
+        zh-CN: Supabase Anon Key
+        zh-HK: Supabase Anon Key
+      supabase_anon_key_desc:
+        en: Public anon key from Supabase project settings.
+        zh-CN: Supabase 项目设置中的公开 anon key。
+        zh-HK: Supabase 項目設定中的公開 anon key。
+      update_url:
+        en: Update API URL
+        zh-CN: 更新接口地址
+        zh-HK: 更新接口地址
+      update_url_desc:
+        en: Leave empty to use the compiled-in or environment value.
+        zh-CN: 留空则使用编译内置或环境变量。
+        zh-HK: 留空則使用編譯內置或環境變量。
+      update_download_url:
+        en: Update Download URL
+        zh-CN: 更新下载地址
+        zh-HK: 更新下載地址
+      update_download_url_desc:
+        en: Optional fallback download page or file URL.
+        zh-CN: 可选的下载页或文件地址兜底。
+        zh-HK: 可選的下載頁或文件地址兜底。
       check_now:
         en: Check for Updates
         zh-CN: 检查更新
