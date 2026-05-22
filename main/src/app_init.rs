@@ -1,5 +1,5 @@
 use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState, hotkey::HotKey};
-use gpui::{AnyWindowHandle, App, Window};
+use gpui::{AnyWindowHandle, App, AppContext, AsyncApp, Window};
 use std::sync::OnceLock;
 use std::time::Duration;
 
@@ -50,7 +50,7 @@ mod system_hotkey {
     use crate::setting_tab::DEFAULT_SYSTEM_HOTKEY_MACOS;
     #[cfg(any(target_os = "windows", target_os = "linux"))]
     use crate::setting_tab::DEFAULT_SYSTEM_HOTKEY_OTHER;
-    use gpui::{AppContext, AsyncApp, Keystroke, Window};
+    use gpui::{AsyncApp, Keystroke};
     use std::sync::{OnceLock, mpsc};
 
     const HOTKEY_POLL_INTERVAL: Duration = Duration::from_millis(16);
@@ -212,29 +212,28 @@ mod system_hotkey {
         .detach();
     }
 
-    fn toggle_main_window(cx: &mut AsyncApp) -> anyhow::Result<()> {
-        if let Some(window_handle) = resolve_toggle_target(cx) {
-            let _ = cx.update_window(window_handle, |_, window: &mut Window, _| {
-                if window.is_window_active() {
-                    window.minimize_window();
-                } else {
-                    window.activate_window();
-                }
-            });
-        }
-        Ok(())
-    }
+}
 
-    fn resolve_toggle_target(cx: &AsyncApp) -> Option<AnyWindowHandle> {
-        cx.update(|app| {
-            let window_stack = app.window_stack();
-            pick_toggle_target(
-                MAIN_WINDOW_HANDLE.get().copied(),
-                window_stack.as_deref(),
-                app.active_window(),
-            )
-        })
+pub fn toggle_main_window(cx: &mut AsyncApp) -> anyhow::Result<()> {
+    let window_handle = cx.update(|app| {
+        let window_stack = app.window_stack();
+        pick_toggle_target(
+            MAIN_WINDOW_HANDLE.get().copied(),
+            window_stack.as_deref(),
+            app.active_window(),
+        )
+    });
+
+    if let Some(window_handle) = window_handle {
+        let _ = cx.update_window(window_handle, |_, window: &mut Window, _| {
+            if window.is_window_active() {
+                window.minimize_window();
+            } else {
+                window.activate_window();
+            }
+        });
     }
+    Ok(())
 }
 
 #[cfg(test)]
