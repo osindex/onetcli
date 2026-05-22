@@ -24,12 +24,16 @@ use gpui_component::{
     switch::Switch,
     v_flex,
 };
+use one_core::llm::{
+    storage::ProviderRepository,
+    types::{ProviderConfig, ProviderType},
+};
 use one_core::cloud_sync::GlobalCloudUser;
 use one_core::cloud_sync::UserInfo;
 use one_core::gpui_tokio::Tokio;
 use one_core::llm::manager::GlobalProviderState;
 use one_core::popup_window::{PopupWindowOptions, open_popup_window};
-use one_core::storage::manager::get_config_dir;
+use one_core::storage::{GlobalStorageState, manager::get_config_dir, now, traits::Repository};
 use one_core::tab_container::{TabContent, TabContentEvent};
 use one_core::utils::auto_save_config::AutoSaveConfig;
 use reqwest_client::ReqwestClient;
@@ -40,7 +44,7 @@ use tracing::{error, info};
 
 use crate::app_init::is_valid_system_hotkey;
 use crate::auth::get_auth_service;
-use crate::license::{get_license_service, offline_license_public_key};
+use crate::license::{current_plan, get_license_service, offline_license_public_key};
 use crate::settings::llm_providers_view::LlmProvidersView;
 use crate::update;
 
@@ -279,6 +283,18 @@ pub struct AppSettings {
     pub terminal_confirm_high_risk_command: bool,
     #[serde(default)]
     pub log_file_path: String,
+    #[serde(default = "default_log_level")]
+    pub log_level: String,
+    #[serde(default)]
+    pub supabase_url: String,
+    #[serde(default)]
+    pub supabase_anon_key: String,
+    #[serde(default)]
+    pub update_url: String,
+    #[serde(default)]
+    pub update_download_url: String,
+    #[serde(default)]
+    pub llm_providers: Vec<LlmProviderSettings>,
     #[serde(default = "default_true")]
     pub auto_update: bool,
     #[serde(default)]
@@ -297,6 +313,8 @@ pub struct AppSettings {
     pub system_hotkey_macos: String,
     #[serde(default = "default_system_hotkey_other")]
     pub system_hotkey_other: String,
+    #[serde(default = "default_close_behavior")]
+    pub close_behavior: String,
 }
 
 pub(crate) const DEFAULT_SYSTEM_HOTKEY_MACOS: &str = "cmd-alt-m";
@@ -326,12 +344,24 @@ fn default_auto_save_interval() -> f64 {
     5.0
 }
 
+fn default_log_level() -> String {
+    "info".to_string()
+}
+
+fn default_log_file_path() -> String {
+    String::new()
+}
+
 fn default_system_hotkey_macos() -> String {
     DEFAULT_SYSTEM_HOTKEY_MACOS.to_string()
 }
 
 fn default_system_hotkey_other() -> String {
     DEFAULT_SYSTEM_HOTKEY_OTHER.to_string()
+}
+
+fn default_close_behavior() -> String {
+    "minimize".to_string()
 }
 
 impl Default for AppSettings {
@@ -351,7 +381,13 @@ impl Default for AppSettings {
             terminal_cursor_blink: false,
             terminal_confirm_multiline_paste: default_true(),
             terminal_confirm_high_risk_command: default_true(),
-            log_file_path: String::new(),
+            log_file_path: default_log_file_path(),
+            log_level: default_log_level(),
+            supabase_url: String::new(),
+            supabase_anon_key: String::new(),
+            update_url: String::new(),
+            update_download_url: String::new(),
+            llm_providers: Vec::new(),
             auto_update: true,
             global_proxy: GlobalProxySettings::default(),
             database_open_mode: DatabaseOpenMode::default(),
@@ -360,6 +396,7 @@ impl Default for AppSettings {
             sql_auto_save_interval: default_auto_save_interval(),
             system_hotkey_macos: default_system_hotkey_macos(),
             system_hotkey_other: default_system_hotkey_other(),
+            close_behavior: default_close_behavior(),
         }
     }
 }
@@ -445,6 +482,108 @@ impl AppSettings {
         }
     }
 
+    fn current_file() -> Option<Self> {
+        let path = Self::config_path()?;
+        let content = std::fs::read_to_string(path).ok()?;
+        serde_json::from_str(&content).ok()
+    }
+
+    pub fn sync_external_defaults(&mut self) {
+        if let Some(current) = Self::current_file() {
+            if self.supabase_url.is_empty() {
+                self.supabase_url = current.supabase_url;
+            }
+            if self.supabase_anon_key.is_empty() {
+                self.supabase_anon_key = current.supabase_anon_key;
+            }
+            if self.update_url.is_empty() {
+                self.update_url = current.update_url;
+            }
+            if self.update_download_url.is_empty() {
+                self.update_download_url = current.update_download_url;
+            }
+            if self.llm_providers.is_empty() {
+                self.llm_providers = current.llm_providers;
+            }
+        }
+    }
+
+    pub fn sync_llm_providers(&self, cx: &mut App) {
+        let Some(storage) = cx.try_global::<GlobalStorageState>() else {
+            return;
+        };
+        let Some(repo) = storage.storage.get::<ProviderRepository>() else {
+            return;
+        };
+
+        if self.llm_providers.is_empty() {
+            return;
+        }
+
+        let mut provider_items = self
+            .llm_providers
+            .iter()
+            .filter_map(|item| {
+                let name = item.name.trim().to_string();
+                let model = item.model.trim().to_string();
+                if name.is_empty() || model.is_empty() {
+                    return None;
+                }
+
+                Some(ProviderConfig {
+                    id: now(),
+                    name,
+                    provider_type: item.provider_type,
+                    api_key: if item.api_key.trim().is_empty() {
+                        None
+                    } else {
+                        Some(item.api_key.trim().to_string())
+                    },
+                    api_base: if item.api_base.trim().is_empty() {
+                        None
+                    } else {
+                        Some(item.api_base.trim().to_string())
+                    },
+                    api_version: if item.api_version.trim().is_empty() {
+                        None
+                    } else {
+                        Some(item.api_version.trim().to_string())
+                    },
+                    model,
+                    models: if item.models.is_empty() {
+                        vec![item.model.trim().to_string()]
+                    } else {
+                        item.models.clone()
+                    },
+                    max_tokens: item.max_tokens,
+                    temperature: item.temperature,
+                    enabled: item.enabled,
+                    is_default: item.is_default,
+                    created_at: now(),
+                    updated_at: now(),
+                })
+            })
+            .collect::<Vec<_>>();
+
+        if let Ok(existing) = repo.list() {
+            for item in existing {
+                if !item.is_builtin() {
+                    let _ = repo.delete(item.id);
+                }
+            }
+        }
+
+        let mut has_default = false;
+        for provider in &mut provider_items {
+            if provider.is_default && !has_default {
+                has_default = true;
+            } else if provider.is_default && has_default {
+                provider.is_default = false;
+            }
+            let _ = repo.insert(provider);
+        }
+    }
+
     pub fn apply(&self, cx: &mut App) {
         gpui_component::set_locale(&self.locale);
 
@@ -488,8 +627,41 @@ pub fn init_settings(cx: &mut App) {
         settings.enable_sql_auto_save,
         settings.sql_auto_save_interval,
     ));
+    let mut settings = settings;
+    settings.sync_external_defaults();
     settings.apply(cx);
+    settings.sync_llm_providers(cx);
     cx.set_global(settings);
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LlmProviderSettings {
+    #[serde(default)]
+    pub name: String,
+    #[serde(default = "default_llm_provider_type")]
+    pub provider_type: ProviderType,
+    #[serde(default)]
+    pub api_key: String,
+    #[serde(default)]
+    pub api_base: String,
+    #[serde(default)]
+    pub api_version: String,
+    #[serde(default)]
+    pub model: String,
+    #[serde(default)]
+    pub models: Vec<String>,
+    #[serde(default)]
+    pub max_tokens: Option<i32>,
+    #[serde(default)]
+    pub temperature: Option<f32>,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub is_default: bool,
+}
+
+fn default_llm_provider_type() -> ProviderType {
+    ProviderType::OpenAI
 }
 
 fn legacy_terminal_settings(settings: &AppSettings) -> TerminalSettings {
@@ -802,7 +974,7 @@ impl SettingsPanel {
                         ]),
                     SettingGroup::new()
                         .title(t!("Settings.General.Log.group_title"))
-                        .item(
+                        .items(vec![
                             SettingItem::new(
                                 t!("Settings.General.Log.file_path"),
                                 SettingField::input(
@@ -820,10 +992,130 @@ impl SettingsPanel {
                                 .default_value(SharedString::from("")),
                             )
                             .description(t!("Settings.General.Log.file_path_desc").to_string()),
-                        ),
+                            SettingItem::new(
+                                t!("Settings.General.Log.level"),
+                                SettingField::dropdown(
+                                    vec![
+                                        ("trace".into(), "trace".into()),
+                                        ("debug".into(), "debug".into()),
+                                        ("info".into(), "info".into()),
+                                        ("warn".into(), "warn".into()),
+                                        ("error".into(), "error".into()),
+                                    ],
+                                    |cx: &App| {
+                                        SharedString::from(
+                                            AppSettings::global(cx).log_level.clone(),
+                                        )
+                                    },
+                                    |val: SharedString, cx: &mut App| {
+                                        let settings = AppSettings::global_mut(cx);
+                                        settings.log_level = val.to_string();
+                                        settings.save();
+                                    },
+                                )
+                                .default_value(SharedString::from("info")),
+                            )
+                            .description(t!("Settings.General.Log.level_desc").to_string()),
+                            SettingItem::new(
+                                t!("Settings.General.Log.close_behavior"),
+                                SettingField::dropdown(
+                                    vec![
+                                        ("minimize".into(), "Minimize".into()),
+                                        ("quit".into(), "Quit".into()),
+                                        ("prompt".into(), "Prompt".into()),
+                                    ],
+                                    |cx: &App| {
+                                        SharedString::from(
+                                            AppSettings::global(cx).close_behavior.clone(),
+                                        )
+                                    },
+                                    |val: SharedString, cx: &mut App| {
+                                        let settings = AppSettings::global_mut(cx);
+                                        settings.close_behavior = val.to_string();
+                                        settings.save();
+                                    },
+                                )
+                                .default_value(SharedString::from("minimize")),
+                            )
+                            .description(
+                                t!("Settings.General.Log.close_behavior_desc").to_string(),
+                            ),
+                    ]),
                     SettingGroup::new()
                         .title(t!("Settings.General.Update.group_title"))
                         .items(vec![
+                            SettingItem::new(
+                                t!("Settings.General.Update.supabase_url"),
+                                SettingField::input(
+                                    |cx: &App| {
+                                        SharedString::from(
+                                            AppSettings::global(cx).supabase_url.clone(),
+                                        )
+                                    },
+                                    |val: SharedString, cx: &mut App| {
+                                        let settings = AppSettings::global_mut(cx);
+                                        settings.supabase_url = val.trim().to_string();
+                                        settings.save();
+                                    },
+                                )
+                                .default_value(SharedString::from("")),
+                            )
+                            .description(
+                                t!("Settings.General.Update.supabase_url_desc").to_string(),
+                            ),
+                            SettingItem::new(
+                                t!("Settings.General.Update.supabase_anon_key"),
+                                SettingField::input(
+                                    |cx: &App| {
+                                        SharedString::from(
+                                            AppSettings::global(cx).supabase_anon_key.clone(),
+                                        )
+                                    },
+                                    |val: SharedString, cx: &mut App| {
+                                        let settings = AppSettings::global_mut(cx);
+                                        settings.supabase_anon_key = val.trim().to_string();
+                                        settings.save();
+                                    },
+                                )
+                                .default_value(SharedString::from("")),
+                            )
+                            .description(
+                                t!("Settings.General.Update.supabase_anon_key_desc").to_string(),
+                            ),
+                            SettingItem::new(
+                                t!("Settings.General.Update.update_url"),
+                                SettingField::input(
+                                    |cx: &App| {
+                                        SharedString::from(AppSettings::global(cx).update_url.clone())
+                                    },
+                                    |val: SharedString, cx: &mut App| {
+                                        let settings = AppSettings::global_mut(cx);
+                                        settings.update_url = val.trim().to_string();
+                                        settings.save();
+                                    },
+                                )
+                                .default_value(SharedString::from("")),
+                            )
+                            .description(t!("Settings.General.Update.update_url_desc").to_string()),
+                            SettingItem::new(
+                                t!("Settings.General.Update.update_download_url"),
+                                SettingField::input(
+                                    |cx: &App| {
+                                        SharedString::from(
+                                            AppSettings::global(cx).update_download_url.clone(),
+                                        )
+                                    },
+                                    |val: SharedString, cx: &mut App| {
+                                        let settings = AppSettings::global_mut(cx);
+                                        settings.update_download_url = val.trim().to_string();
+                                        settings.save();
+                                    },
+                                )
+                                .default_value(SharedString::from("")),
+                            )
+                            .description(
+                                t!("Settings.General.Update.update_download_url_desc").to_string(),
+                            ),
                             SettingItem::new(
                                 t!("Settings.General.Update.auto_update"),
                                 SettingField::switch(
@@ -1514,6 +1806,23 @@ fn render_account_section(_window: &mut Window, cx: &App) -> gpui::AnyElement {
                                     .child(t!("Settings.Account.email").to_string()),
                             )
                             .child(div().text_sm().child(email)),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .items_center()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child("Plan:"),
+                            )
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child(current_plan(cx)),
+                            ),
                     ),
             )
             // 登出按钮

@@ -119,8 +119,14 @@ fn quit_app(cx: &mut App) {
 }
 
 fn init_tracing(settings: &AppSettings) {
-    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+    let settings_level = settings.log_level.trim();
+    let env_filter = if !settings_level.is_empty() {
+        tracing_subscriber::EnvFilter::try_new(settings_level)
+            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"))
+    } else {
+        tracing_subscriber::EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"))
+    };
 
     match configured_log_file_path(&settings.log_file_path) {
         Ok(log_file_path) => match log_file_appender(&log_file_path) {
