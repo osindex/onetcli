@@ -724,11 +724,8 @@ where
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use std::sync::{Arc, Mutex as StdMutex};
-    #[cfg(unix)]
-    use std::sync::{Mutex, OnceLock};
+    use std::sync::{Arc, Mutex as StdMutex, OnceLock};
 
-    #[cfg(unix)]
     fn test_auth_failure_messages() -> AuthFailureMessages {
         AuthFailureMessages {
             password_failed: "password".to_string(),
@@ -753,8 +750,8 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn agent_connect_without_env_returns_readable_error() {
-        static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        let env_lock = ENV_LOCK.get_or_init(|| Mutex::new(()));
+        static ENV_LOCK: OnceLock<StdMutex<()>> = OnceLock::new();
+        let env_lock = ENV_LOCK.get_or_init(|| StdMutex::new(()));
         let _guard = env_lock.lock().expect("环境锁不应中毒");
 
         let previous = std::env::var("SSH_AUTH_SOCK").ok();
@@ -785,8 +782,8 @@ mod tests {
 
     #[test]
     fn discover_default_private_keys_returns_expected_order() {
-        static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        let env_lock = ENV_LOCK.get_or_init(|| Mutex::new(()));
+        static ENV_LOCK: OnceLock<StdMutex<()>> = OnceLock::new();
+        let env_lock = ENV_LOCK.get_or_init(|| StdMutex::new(()));
         let _guard = env_lock.lock().expect("环境锁不应中毒");
 
         let temp_home = std::env::temp_dir().join(format!(
@@ -831,8 +828,8 @@ mod tests {
 
     #[test]
     fn expand_auto_publickey_auth_contains_agent_and_default_keys() {
-        static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        let env_lock = ENV_LOCK.get_or_init(|| Mutex::new(()));
+        static ENV_LOCK: OnceLock<StdMutex<()>> = OnceLock::new();
+        let env_lock = ENV_LOCK.get_or_init(|| StdMutex::new(()));
         let _guard = env_lock.lock().expect("环境锁不应中毒");
 
         let temp_home = std::env::temp_dir().join(format!(

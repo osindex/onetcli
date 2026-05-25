@@ -2485,7 +2485,6 @@ dependencies = [
  "futures",
  "gpui",
  "gpui-component",
- "json5",
  "lsp-types 0.97.0",
  "one-core",
  "one-ui",
