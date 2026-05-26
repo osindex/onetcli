@@ -4,9 +4,8 @@ use std::collections::HashMap;
 
 use gpui::{
     AnyElement, App, AppContext, AsyncApp, ClipboardItem, Context, Entity, EventEmitter,
-    FocusHandle, Focusable, InteractiveElement, IntoElement, ParentElement, Render, SharedString,
-    StatefulInteractiveElement, Styled, Subscription, UniformListScrollHandle, Window, div,
-    prelude::FluentBuilder, px, uniform_list,
+    FocusHandle, Focusable, IntoElement, ParentElement, Render, SharedString, Styled, Subscription,
+    Window, div, prelude::FluentBuilder, px,
 };
 use gpui_component::{
     ActiveTheme, Disableable, Icon, IconName, Sizable, Size, StyledExt, WindowExt as _,
@@ -23,11 +22,15 @@ use mongodb::bson::{Bson, Document};
 use mongodb::options::FindOptions;
 use one_core::gpui_tokio::Tokio;
 use one_core::tab_container::{TabContent, TabContentEvent};
+use one_ui::edit_table::{EditTable, EditTableEvent, EditTableState};
 use rust_i18n::t;
 use tracing::{error, info, warn};
 
 use crate::GlobalMongoState;
-use crate::types::{MongoError, bson_to_string, document_to_pretty_json};
+use crate::document_table_delegate::{MongoDocumentFieldChange, MongoDocumentTableDelegate};
+use crate::types::{
+    MongoError, bson_to_compact_json, bson_to_pretty_json, bson_to_string, document_to_pretty_json,
+};
 
 const DEFAULT_PAGE_SIZE: i64 = 25;
 const DEFAULT_SKIP: i64 = 0;
@@ -36,12 +39,10 @@ const TAB_AGGREGATIONS: usize = 1;
 const TAB_SCHEMA: usize = 2;
 const TAB_INDEXES: usize = 3;
 const TAB_VALIDATION: usize = 4;
-
 #[derive(Clone)]
 struct DocumentItem {
     id: String,
     id_bson: Option<Bson>,
-    summary: String,
     document: Document,
     pretty_json: String,
 }
@@ -58,6 +59,13 @@ enum EditorMode {
     View,
     Create,
     Update,
+    FieldUpdate,
+}
+
+#[derive(Clone)]
+struct EditingField {
+    field: String,
+    id: Bson,
 }
 
 #[derive(Clone)]
@@ -75,30 +83,13 @@ impl QueryInputs {
     }
 }
 
-fn truncate_summary(value: &str, max_len: usize) -> String {
-    let mut summary = value.chars().take(max_len).collect::<String>();
-    if value.chars().count() > max_len {
-        summary.push_str("...");
-    }
-    summary
-}
-
 fn parse_optional_document(text: &str, label: &str) -> Result<Option<Document>, MongoError> {
     let trimmed = text.trim();
     if trimmed.is_empty() {
         return Ok(None);
     }
 
-    let value: serde_json::Value = serde_json::from_str(trimmed).map_err(|e| {
-        MongoError::InvalidFilter(
-            t!("MongoCollection.parse_failed", label = label, error = e).to_string(),
-        )
-    })?;
-    let bson = mongodb::bson::to_bson(&value).map_err(|e| {
-        MongoError::InvalidFilter(
-            t!("MongoCollection.parse_failed", label = label, error = e).to_string(),
-        )
-    })?;
+    let bson = parse_required_bson_value(trimmed, label)?;
     match bson {
         Bson::Document(document) => Ok(Some(document)),
         _ => Err(MongoError::InvalidFilter(
@@ -115,22 +106,33 @@ fn parse_required_document(text: &str, label: &str) -> Result<Document, MongoErr
         ));
     }
 
-    let value: serde_json::Value = serde_json::from_str(trimmed).map_err(|e| {
-        MongoError::InvalidFilter(
-            t!("MongoCollection.parse_failed", label = label, error = e).to_string(),
-        )
-    })?;
-    let bson = mongodb::bson::to_bson(&value).map_err(|e| {
-        MongoError::InvalidFilter(
-            t!("MongoCollection.parse_failed", label = label, error = e).to_string(),
-        )
-    })?;
+    let bson = parse_required_bson_value(trimmed, label)?;
     match bson {
         Bson::Document(document) => Ok(document),
         _ => Err(MongoError::InvalidFilter(
             t!("MongoCollection.must_be_json_object", label = label).to_string(),
         )),
     }
+}
+
+fn parse_required_bson_value(text: &str, label: &str) -> Result<Bson, MongoError> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return Err(MongoError::InvalidFilter(
+            t!("MongoCollection.required", label = label).to_string(),
+        ));
+    }
+
+    let value: serde_json::Value = serde_json::from_str(trimmed).map_err(|e| {
+        MongoError::InvalidFilter(
+            t!("MongoCollection.parse_failed", label = label, error = e).to_string(),
+        )
+    })?;
+    Bson::try_from(value).map_err(|e| {
+        MongoError::InvalidFilter(
+            t!("MongoCollection.parse_failed", label = label, error = e).to_string(),
+        )
+    })
 }
 
 fn parse_i64_input(text: &str, label: &str, default: i64, min: i64) -> Result<i64, MongoError> {
@@ -169,7 +171,7 @@ fn parse_pipeline(text: &str) -> Result<Vec<Document>, MongoError> {
 
     let mut pipeline = Vec::with_capacity(array.len());
     for (index, item) in array.into_iter().enumerate() {
-        let bson = mongodb::bson::to_bson(&item).map_err(|e| {
+        let bson = Bson::try_from(item).map_err(|e| {
             MongoError::InvalidFilter(
                 t!(
                     "MongoCollection.pipeline_item_parse_failed",
@@ -196,20 +198,43 @@ fn parse_pipeline(text: &str) -> Result<Vec<Document>, MongoError> {
 }
 
 fn document_to_compact_json(document: &Document) -> Result<String, MongoError> {
-    let bson =
-        mongodb::bson::to_bson(document).map_err(|e| MongoError::Serialization(e.to_string()))?;
-    serde_json::to_string(&bson).map_err(|e| MongoError::Serialization(e.to_string()))
+    bson_to_compact_json(&Bson::Document(document.clone()))
 }
 
 fn documents_to_pretty_json(documents: &[Document]) -> Result<String, MongoError> {
     let mut array = Vec::with_capacity(documents.len());
     for document in documents {
-        let bson = mongodb::bson::to_bson(document)
-            .map_err(|e| MongoError::Serialization(e.to_string()))?;
-        array.push(bson);
+        array.push(Bson::Document(document.clone()));
     }
-    let bson = Bson::Array(array);
-    serde_json::to_string_pretty(&bson).map_err(|e| MongoError::Serialization(e.to_string()))
+    bson_to_pretty_json(&Bson::Array(array))
+}
+
+fn document_item_from_document(
+    index: usize,
+    document: Document,
+) -> Result<DocumentItem, MongoError> {
+    let id_bson = document.get("_id").cloned();
+    let id = id_bson
+        .as_ref()
+        .map(bson_to_string)
+        .unwrap_or_else(|| format!("#{}", index + 1));
+    let pretty_json = document_to_pretty_json(&document)?;
+    Ok(DocumentItem {
+        id,
+        id_bson,
+        document,
+        pretty_json,
+    })
+}
+
+fn document_items_from_documents(
+    documents: Vec<Document>,
+) -> Result<Vec<DocumentItem>, MongoError> {
+    documents
+        .into_iter()
+        .enumerate()
+        .map(|(index, document)| document_item_from_document(index, document))
+        .collect()
 }
 
 fn bson_type_name(value: &Bson) -> &'static str {
@@ -301,6 +326,7 @@ pub struct CollectionView {
     index_drop_input: Entity<InputState>,
     indexes_output: Entity<InputState>,
     validation_input: Entity<InputState>,
+    document_table: Entity<EditTableState<MongoDocumentTableDelegate>>,
     documents: Vec<DocumentItem>,
     selected_index: Option<usize>,
     is_loading: bool,
@@ -311,6 +337,7 @@ pub struct CollectionView {
     show_explain: bool,
     editor_mode: EditorMode,
     editing_id: Option<Bson>,
+    editing_field: Option<EditingField>,
     pending_editor_value: Option<String>,
     pending_explain_value: Option<String>,
     pending_aggregation_value: Option<String>,
@@ -319,6 +346,7 @@ pub struct CollectionView {
     pending_validation_value: Option<String>,
     pending_reload: bool,
     pending_select_id: Option<Bson>,
+    detail_panel_collapsed: bool,
     aggregation_loading: bool,
     aggregation_error: Option<String>,
     aggregation_count: Option<usize>,
@@ -330,7 +358,7 @@ pub struct CollectionView {
     indexes_count: Option<usize>,
     validation_loading: bool,
     validation_error: Option<String>,
-    list_scroll_handle: UniformListScrollHandle,
+    _document_table_sub: Option<Subscription>,
     _subscriptions: Vec<Subscription>,
     focus_handle: FocusHandle,
 }
@@ -435,6 +463,12 @@ impl CollectionView {
                 .soft_wrap(false)
                 .placeholder(t!("MongoCollection.validation_placeholder").to_string())
         });
+        let document_table = cx.new(|cx| {
+            EditTableState::new(MongoDocumentTableDelegate::new(Vec::new()), window, cx)
+                .sortable(false)
+                .col_movable(false)
+                .col_selectable(false)
+        });
         let mut subscriptions = Vec::new();
         let mut subscribe_enter = |subscriptions: &mut Vec<Subscription>,
                                    input: &Entity<InputState>| {
@@ -451,7 +485,7 @@ impl CollectionView {
         subscribe_enter(&mut subscriptions, &page_size_input);
         subscribe_enter(&mut subscriptions, &skip_input);
 
-        Self {
+        let mut result = Self {
             connection_id: None,
             database_name: None,
             collection_name: None,
@@ -471,6 +505,7 @@ impl CollectionView {
             index_drop_input,
             indexes_output,
             validation_input,
+            document_table,
             documents: Vec::new(),
             selected_index: None,
             is_loading: false,
@@ -481,6 +516,7 @@ impl CollectionView {
             show_explain: false,
             editor_mode: EditorMode::View,
             editing_id: None,
+            editing_field: None,
             pending_editor_value: None,
             pending_explain_value: None,
             pending_aggregation_value: None,
@@ -489,6 +525,7 @@ impl CollectionView {
             pending_validation_value: None,
             pending_reload: false,
             pending_select_id: None,
+            detail_panel_collapsed: false,
             aggregation_loading: false,
             aggregation_error: None,
             aggregation_count: None,
@@ -500,9 +537,52 @@ impl CollectionView {
             indexes_count: None,
             validation_loading: false,
             validation_error: None,
-            list_scroll_handle: UniformListScrollHandle::new(),
+            _document_table_sub: None,
             _subscriptions: subscriptions,
             focus_handle: cx.focus_handle(),
+        };
+        result.bind_document_table_event(window, cx);
+        result
+    }
+
+    fn bind_document_table_event(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let sub = cx.subscribe_in(
+            &self.document_table,
+            window,
+            |this, _, event: &EditTableEvent, window, cx| match event {
+                EditTableEvent::SelectCell(row, _) | EditTableEvent::SelectRow(row) => {
+                    this.select_document(*row, window, cx);
+                }
+                EditTableEvent::CellEdited(row, _) => {
+                    this.sync_documents_from_table(cx);
+                    this.select_document(*row, window, cx);
+                }
+                EditTableEvent::DoubleClickedCell(row, col) => {
+                    this.start_field_update(*row, *col, window, cx);
+                }
+                _ => {}
+            },
+        );
+        self._document_table_sub = Some(sub);
+    }
+
+    fn refresh_document_table(&self, cx: &mut Context<Self>) {
+        let documents = self
+            .documents
+            .iter()
+            .map(|item| item.document.clone())
+            .collect::<Vec<_>>();
+        self.document_table.update(cx, |state, cx| {
+            state.delegate_mut().set_documents(documents);
+            state.refresh(cx);
+        });
+    }
+
+    fn sync_documents_from_table(&mut self, cx: &mut Context<Self>) {
+        let documents = self.document_table.read(cx).delegate().documents().to_vec();
+        match document_items_from_documents(documents) {
+            Ok(items) => self.documents = items,
+            Err(error) => self.set_error(error.to_string(), cx),
         }
     }
 
@@ -519,8 +599,11 @@ impl CollectionView {
         self.active_tab = TAB_DOCUMENTS;
         self.page_index = 0;
         self.selected_index = None;
+        self.documents.clear();
+        self.refresh_document_table(cx);
         self.editor_mode = EditorMode::View;
         self.editing_id = None;
+        self.editing_field = None;
         self.show_explain = false;
         self.aggregation_loading = false;
         self.aggregation_error = None;
@@ -710,6 +793,11 @@ impl CollectionView {
         cx.notify();
     }
 
+    fn toggle_detail_panel(&mut self, cx: &mut Context<Self>) {
+        self.detail_panel_collapsed = !self.detail_panel_collapsed;
+        cx.notify();
+    }
+
     fn select_document(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
         let Some(item) = self.documents.get(index).cloned() else {
             return;
@@ -717,6 +805,7 @@ impl CollectionView {
         self.selected_index = Some(index);
         self.editor_mode = EditorMode::View;
         self.editing_id = item.id_bson.clone();
+        self.editing_field = None;
         self.show_explain = false;
         self.set_editor_value(item.pretty_json);
         self.apply_pending_editor_value(window, cx);
@@ -726,7 +815,9 @@ impl CollectionView {
     fn start_create(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.editor_mode = EditorMode::Create;
         self.editing_id = None;
+        self.editing_field = None;
         self.show_explain = false;
+        self.detail_panel_collapsed = false;
         self.set_editor_value("{\n  \n}".to_string());
         self.apply_pending_editor_value(window, cx);
         cx.notify();
@@ -741,33 +832,81 @@ impl CollectionView {
         };
         self.editor_mode = EditorMode::Update;
         self.editing_id = item.id_bson.clone();
+        self.editing_field = None;
         self.show_explain = false;
+        self.detail_panel_collapsed = false;
         self.set_editor_value(item.pretty_json);
         self.apply_pending_editor_value(window, cx);
         cx.notify();
     }
 
-    fn start_clone(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(item) = self.documents.get(index).cloned() else {
+    fn start_field_update(
+        &mut self,
+        row_index: usize,
+        table_col_index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if table_col_index == 0 {
+            return;
+        }
+        let delegate_col_index = table_col_index.saturating_sub(1);
+        let detail = {
+            let state = self.document_table.read(cx);
+            let delegate = state.delegate();
+            if !delegate.is_detail_editable_field(row_index, delegate_col_index) {
+                return;
+            }
+            let field = match delegate.field_name_at(delegate_col_index) {
+                Some(field) => field.to_string(),
+                None => return,
+            };
+            let has_table_changes = delegate.has_changes();
+            (field, has_table_changes)
+        };
+        if detail.1 {
+            self.set_error(
+                t!("MongoCollection.save_or_revert_changes_first").to_string(),
+                cx,
+            );
+            return;
+        }
+
+        let Some(item) = self.documents.get(row_index).cloned() else {
             return;
         };
-        let mut cloned = item.document.clone();
-        cloned.remove("_id");
-        match document_to_pretty_json(&cloned) {
-            Ok(content) => {
-                self.editor_mode = EditorMode::Create;
-                self.editing_id = None;
-                self.show_explain = false;
-                self.set_editor_value(content);
-                self.apply_pending_editor_value(window, cx);
-                cx.notify();
+        let Some(id) = item.id_bson.clone() else {
+            self.set_error(t!("MongoCollection.id_required_for_update").to_string(), cx);
+            return;
+        };
+        let Some(value) = item.document.get(&detail.0) else {
+            return;
+        };
+        let editor_value = match bson_to_pretty_json(value) {
+            Ok(value) => value,
+            Err(error) => {
+                self.set_error(error.to_string(), cx);
+                return;
             }
-            Err(error) => self.set_error(error.to_string(), cx),
-        }
+        };
+
+        self.selected_index = Some(row_index);
+        self.editor_mode = EditorMode::FieldUpdate;
+        self.editing_id = Some(id.clone());
+        self.editing_field = Some(EditingField {
+            field: detail.0,
+            id,
+        });
+        self.show_explain = false;
+        self.detail_panel_collapsed = false;
+        self.set_editor_value(editor_value);
+        self.apply_pending_editor_value(window, cx);
+        cx.notify();
     }
 
     fn cancel_edit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.editor_mode = EditorMode::View;
+        self.editing_field = None;
         self.show_explain = false;
         if let Some(index) = self.selected_index {
             if let Some(item) = self.documents.get(index) {
@@ -778,7 +917,82 @@ impl CollectionView {
         cx.notify();
     }
 
+    fn save_field_update(&mut self, cx: &mut Context<Self>) {
+        let Some(editing_field) = self.editing_field.clone() else {
+            self.set_error(t!("MongoCollection.id_required_for_update").to_string(), cx);
+            return;
+        };
+        let content = self.editor_input.read(cx).text().to_string();
+        let value = match parse_required_bson_value(&content, &editing_field.field) {
+            Ok(value) => value,
+            Err(error) => {
+                self.set_error(error.to_string(), cx);
+                return;
+            }
+        };
+
+        let Some(connection_id) = self.connection_id.clone() else {
+            return;
+        };
+        let Some(database_name) = self.database_name.clone() else {
+            return;
+        };
+        let Some(collection_name) = self.collection_name.clone() else {
+            return;
+        };
+
+        self.pending_select_id = Some(editing_field.id.clone());
+        self.is_loading = true;
+        self.error_message = None;
+        cx.notify();
+
+        let global_state = cx.global::<GlobalMongoState>().clone();
+        let success_message = t!("MongoCollection.field_updated").to_string();
+
+        cx.spawn(async move |this, cx: &mut AsyncApp| {
+            let result = Tokio::spawn_result(cx, async move {
+                let connection = global_state.get_connection(&connection_id).ok_or_else(|| {
+                    anyhow::anyhow!(t!("MongoCollection.connection_missing").to_string())
+                })?;
+                let guard = connection.read().await;
+                let EditingField { id, field } = editing_field;
+                let mut set_fields = Document::new();
+                set_fields.insert(field, value);
+                guard
+                    .update_document_fields(&database_name, &collection_name, id, set_fields)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("{}", e))
+            })
+            .await;
+
+            _ = this.update(cx, |view, cx| {
+                view.is_loading = false;
+                match result {
+                    Ok(_) => {
+                        view.editor_mode = EditorMode::View;
+                        view.editing_id = None;
+                        view.editing_field = None;
+                        view.show_explain = false;
+                        view.pending_reload = true;
+                        Self::notify_success(&success_message, cx);
+                    }
+                    Err(error) => {
+                        view.error_message = Some(error.to_string());
+                        Self::notify_error(&error.to_string(), cx);
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     fn save_edit(&mut self, cx: &mut Context<Self>) {
+        if self.editor_mode == EditorMode::FieldUpdate {
+            self.save_field_update(cx);
+            return;
+        }
+
         let content = self.editor_input.read(cx).text().to_string();
         let mut document = match parse_required_document(
             &content,
@@ -805,6 +1019,7 @@ impl CollectionView {
         let success_message = match editor_mode {
             EditorMode::Create => t!("MongoCollection.document_created").to_string(),
             EditorMode::Update => t!("MongoCollection.document_updated").to_string(),
+            EditorMode::FieldUpdate => t!("MongoCollection.field_updated").to_string(),
             EditorMode::View => t!("MongoCollection.operation_done").to_string(),
         };
         let target_id = if editor_mode == EditorMode::Update {
@@ -856,6 +1071,7 @@ impl CollectionView {
                             .await
                             .map(|_| ())
                     }
+                    EditorMode::FieldUpdate => Ok(()),
                     EditorMode::View => Ok(()),
                 }
                 .map_err(|e| anyhow::anyhow!("{}", e))
@@ -868,6 +1084,7 @@ impl CollectionView {
                     Ok(_) => {
                         view.editor_mode = EditorMode::View;
                         view.editing_id = None;
+                        view.editing_field = None;
                         view.show_explain = false;
                         view.pending_reload = true;
                         Self::notify_success(&success_message, cx);
@@ -934,6 +1151,7 @@ impl CollectionView {
                     Ok(_) => {
                         view.editor_mode = EditorMode::View;
                         view.editing_id = None;
+                        view.editing_field = None;
                         view.selected_index = None;
                         view.show_explain = false;
                         view.pending_reload = true;
@@ -959,6 +1177,91 @@ impl CollectionView {
         };
         cx.write_to_clipboard(ClipboardItem::new_string(item.pretty_json.clone()));
         Self::notify_success(t!("MongoCollection.document_copied").as_ref(), cx);
+    }
+
+    fn save_table_changes(&mut self, cx: &mut Context<Self>) {
+        let changes = match self.document_table.read(cx).delegate().field_changes() {
+            Ok(changes) => changes,
+            Err(error) => {
+                self.set_error(error.to_string(), cx);
+                return;
+            }
+        };
+        if changes.is_empty() {
+            return;
+        }
+        let Some(connection_id) = self.connection_id.clone() else {
+            return;
+        };
+        let Some(database_name) = self.database_name.clone() else {
+            return;
+        };
+        let Some(collection_name) = self.collection_name.clone() else {
+            return;
+        };
+
+        self.pending_select_id = self
+            .selected_index
+            .and_then(|index| self.documents.get(index))
+            .and_then(|item| item.id_bson.clone());
+        self.is_loading = true;
+        self.error_message = None;
+        cx.notify();
+
+        let global_state = cx.global::<GlobalMongoState>().clone();
+        let change_count = changes
+            .iter()
+            .map(|change| change.set_fields.len())
+            .sum::<usize>();
+
+        cx.spawn(async move |this, cx: &mut AsyncApp| {
+            let result = Tokio::spawn_result(cx, async move {
+                let connection = global_state.get_connection(&connection_id).ok_or_else(|| {
+                    anyhow::anyhow!(t!("MongoCollection.connection_missing").to_string())
+                })?;
+                let guard = connection.read().await;
+                for MongoDocumentFieldChange { id, set_fields, .. } in changes {
+                    guard
+                        .update_document_fields(&database_name, &collection_name, id, set_fields)
+                        .await
+                        .map_err(|error| anyhow::anyhow!("{}", error))?;
+                }
+                Ok(())
+            })
+            .await;
+
+            _ = this.update(cx, |view, cx| {
+                view.is_loading = false;
+                match result {
+                    Ok(_) => {
+                        view.pending_reload = true;
+                        Self::notify_success(
+                            &t!("MongoCollection.table_changes_saved", count = change_count)
+                                .to_string(),
+                            cx,
+                        );
+                    }
+                    Err(error) => {
+                        view.error_message = Some(error.to_string());
+                        Self::notify_error(&error.to_string(), cx);
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn revert_table_changes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.document_table.update(cx, |state, cx| {
+            state.delegate_mut().revert_changes();
+            state.refresh(cx);
+        });
+        self.sync_documents_from_table(cx);
+        if let Some(index) = self.selected_index {
+            self.select_document(index, window, cx);
+        }
+        cx.notify();
     }
 
     fn export_data(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1060,12 +1363,9 @@ impl CollectionView {
     fn build_export_data(&self) -> Result<String, MongoError> {
         let mut array = Vec::new();
         for item in &self.documents {
-            let bson = mongodb::bson::to_bson(&item.document)
-                .map_err(|e| MongoError::Serialization(e.to_string()))?;
-            array.push(bson);
+            array.push(Bson::Document(item.document.clone()));
         }
-        let bson = Bson::Array(array);
-        serde_json::to_string_pretty(&bson).map_err(|e| MongoError::Serialization(e.to_string()))
+        bson_to_pretty_json(&Bson::Array(array))
     }
 
     fn build_query_code(
@@ -1123,6 +1423,7 @@ impl CollectionView {
         self.is_loading = true;
         self.error_message = None;
         self.show_explain = true;
+        self.detail_panel_collapsed = false;
         cx.notify();
 
         let global_state = cx.global::<GlobalMongoState>().clone();
@@ -1688,10 +1989,12 @@ impl CollectionView {
         self.is_loading = true;
         self.error_message = None;
         self.documents.clear();
+        self.refresh_document_table(cx);
         self.total_count = None;
         self.selected_index = None;
         self.editor_mode = EditorMode::View;
         self.editing_id = None;
+        self.editing_field = None;
         self.show_explain = false;
         cx.notify();
 
@@ -1749,30 +2052,11 @@ impl CollectionView {
                             documents.len(),
                             total
                         );
-                        let items_result: Result<Vec<DocumentItem>, MongoError> = documents
-                            .into_iter()
-                            .enumerate()
-                            .map(|(index, document)| {
-                                let id_bson = document.get("_id").cloned();
-                                let id = id_bson
-                                    .as_ref()
-                                    .map(bson_to_string)
-                                    .unwrap_or_else(|| format!("#{}", index + 1));
-                                let json = document_to_pretty_json(&document)?;
-                                let summary =
-                                    truncate_summary(json.lines().next().unwrap_or(""), 120);
-                                Ok(DocumentItem {
-                                    id,
-                                    id_bson,
-                                    summary,
-                                    document,
-                                    pretty_json: json,
-                                })
-                            })
-                            .collect();
+                        let items_result = document_items_from_documents(documents);
                         match items_result {
                             Ok(items) => {
                                 view.documents = items;
+                                view.refresh_document_table(cx);
                                 view.total_count = total;
                                 view.is_loading = false;
                                 view.error_message = None;
@@ -1786,10 +2070,12 @@ impl CollectionView {
                                         view.selected_index = Some(index);
                                         view.editor_mode = EditorMode::View;
                                         view.editing_id = item.id_bson.clone();
+                                        view.editing_field = None;
                                         view.set_editor_value(item.pretty_json.clone());
                                     } else {
                                         view.selected_index = None;
                                         view.editing_id = None;
+                                        view.editing_field = None;
                                     }
                                 }
                             }
@@ -1979,6 +2265,7 @@ impl CollectionView {
     fn render_action_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let has_selection = self.selected_index.is_some();
         let is_loading = self.is_loading;
+        let has_table_changes = self.document_table.read(cx).delegate().has_changes();
         h_flex()
             .gap_2()
             .items_center()
@@ -2013,6 +2300,28 @@ impl CollectionView {
                     .disabled(is_loading || !has_selection)
                     .on_click(cx.listener(|this, _, _window, cx| {
                         this.delete_selected(cx);
+                    })),
+            )
+            .child(
+                Button::new("mongo-save-table-changes")
+                    .small()
+                    .primary()
+                    .icon(IconName::Check)
+                    .label(t!("MongoCollection.save_changes").to_string())
+                    .disabled(is_loading || !has_table_changes)
+                    .on_click(cx.listener(|this, _, _window, cx| {
+                        this.save_table_changes(cx);
+                    })),
+            )
+            .child(
+                Button::new("mongo-revert-table-changes")
+                    .small()
+                    .outline()
+                    .icon(IconName::Undo)
+                    .label(t!("MongoCollection.revert_changes").to_string())
+                    .disabled(is_loading || !has_table_changes)
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.revert_table_changes(window, cx);
                     })),
             )
             .child(
@@ -2052,8 +2361,13 @@ impl CollectionView {
                     .flex_1()
                     .min_h_0()
                     .h_full()
-                    .child(self.render_document_list(cx))
-                    .child(self.render_detail_panel(cx)),
+                    .child(self.render_document_table(cx))
+                    .when(self.detail_panel_collapsed, |this| {
+                        this.child(self.render_collapsed_detail_panel(cx))
+                    })
+                    .when(!self.detail_panel_collapsed, |this| {
+                        this.child(self.render_detail_panel(cx))
+                    }),
             )
             .child(self.render_pagination_bar(cx))
     }
@@ -2444,171 +2758,79 @@ impl CollectionView {
             .into_any_element()
     }
 
-    fn render_document_row(
-        &mut self,
-        index: usize,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let Some(item) = self.documents.get(index).cloned() else {
-            return div().into_any_element();
-        };
-        let is_selected = Some(index) == self.selected_index;
-        let label = format!("{} {}", item.id, item.summary);
-
-        h_flex()
-            .id(SharedString::from(format!("mongo-doc-{}", index)))
-            .w_full()
-            .px_2()
-            .py_1()
-            .rounded(px(6.0))
-            .group("mongo-doc-row")
-            .cursor_pointer()
-            .when(is_selected, |this| this.bg(cx.theme().list_active))
-            .when(!is_selected, |this| this.text_color(cx.theme().foreground))
-            .hover(|style| style.bg(cx.theme().list_active))
-            .on_click(cx.listener(move |this, _, window, cx| {
-                this.select_document(index, window, cx);
-            }))
-            .child(div().flex_1().text_sm().truncate().child(label))
-            .child(
-                h_flex()
-                    .gap_1()
-                    .items_center()
-                    .invisible()
-                    .group_hover("mongo-doc-row", |style| style.visible())
-                    .child(
-                        Button::new(SharedString::from(format!("mongo-doc-edit-{}", index)))
-                            .ghost()
-                            .xsmall()
-                            .icon(IconName::Edit)
-                            .tooltip(t!("Common.edit").to_string())
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                cx.stop_propagation();
-                                this.select_document(index, window, cx);
-                                this.start_update(window, cx);
-                            })),
-                    )
-                    .child(
-                        Button::new(SharedString::from(format!("mongo-doc-delete-{}", index)))
-                            .ghost()
-                            .xsmall()
-                            .icon(IconName::Remove)
-                            .tooltip(t!("Common.delete").to_string())
-                            .on_click(cx.listener(move |this, _, _window, cx| {
-                                cx.stop_propagation();
-                                this.selected_index = Some(index);
-                                this.delete_selected(cx);
-                            })),
-                    )
-                    .child(
-                        Button::new(SharedString::from(format!("mongo-doc-copy-{}", index)))
-                            .ghost()
-                            .xsmall()
-                            .icon(IconName::Copy)
-                            .tooltip(t!("Common.copy").to_string())
-                            .on_click(cx.listener(move |this, _, _window, cx| {
-                                cx.stop_propagation();
-                                this.selected_index = Some(index);
-                                this.copy_selected(cx);
-                            })),
-                    )
-                    .child(
-                        Button::new(SharedString::from(format!("mongo-doc-clone-{}", index)))
-                            .ghost()
-                            .xsmall()
-                            .icon(IconName::Plus)
-                            .tooltip(t!("MongoCollection.clone").to_string())
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                cx.stop_propagation();
-                                this.start_clone(index, window, cx);
-                            })),
-                    ),
-            )
-            .into_any_element()
-    }
-
-    fn render_list_body(&self, cx: &mut Context<Self>) -> AnyElement {
-        if self.is_loading {
-            return div()
+    fn render_document_table(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let body = if self.is_loading {
+            div()
                 .size_full()
                 .flex()
                 .items_center()
                 .justify_center()
                 .child(Spinner::new())
-                .into_any_element();
-        }
-
-        if let Some(error) = &self.error_message {
-            return div()
+                .into_any_element()
+        } else if let Some(error) = &self.error_message {
+            div()
                 .size_full()
                 .flex()
                 .items_center()
                 .justify_center()
                 .text_color(cx.theme().danger)
                 .child(error.clone())
-                .into_any_element();
-        }
-
-        let item_count = self.documents.len();
-        if item_count == 0 {
-            return self.render_empty_state(t!("MongoCollection.no_documents").as_ref(), cx);
-        }
-
-        uniform_list(
-            "mongo-documents-list",
-            item_count,
-            cx.processor(
-                move |view: &mut Self, visible_range: std::ops::Range<usize>, window, cx| {
-                    visible_range
-                        .map(|index| view.render_document_row(index, window, cx))
-                        .collect()
-                },
-            ),
-        )
-        .size_full()
-        .track_scroll(&self.list_scroll_handle)
-        .into_any_element()
-    }
-
-    fn render_document_list(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let total = self.total_count.unwrap_or(self.documents.len() as i64);
-        let title = t!("MongoCollection.documents_title", total = total).to_string();
+                .into_any_element()
+        } else if self.documents.is_empty() {
+            self.render_empty_state(t!("MongoCollection.no_documents").as_ref(), cx)
+        } else {
+            EditTable::new(&self.document_table).into_any_element()
+        };
 
         v_flex()
             .flex_1()
             .h_full()
             .min_h_0()
-            .min_w(px(280.0))
-            .max_w(px(420.0))
+            .min_w(px(520.0))
             .border_r_1()
             .border_color(cx.theme().border)
+            .child(body)
+    }
+
+    fn render_collapsed_detail_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex()
+            .h_full()
+            .w(px(32.0))
+            .flex_shrink_0()
+            .items_center()
+            .py_1()
+            .border_l_1()
+            .border_color(cx.theme().border)
             .child(
-                h_flex().items_center().px_2().py_1().child(
-                    div()
-                        .text_sm()
-                        .font_semibold()
-                        .text_color(cx.theme().foreground)
-                        .child(title),
-                ),
-            )
-            .child(
-                div()
-                    .id("mongo-document-list-scroll")
-                    .flex_1()
-                    .min_h_0()
-                    .child(self.render_list_body(cx)),
+                Button::new("mongo-expand-preview")
+                    .xsmall()
+                    .ghost()
+                    .icon(IconName::ChevronLeft)
+                    .tooltip(t!("MongoCollection.expand_preview").to_string())
+                    .on_click(cx.listener(|this, _, _window, cx| {
+                        this.toggle_detail_panel(cx);
+                    })),
             )
     }
 
     fn render_detail_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let is_editing = matches!(self.editor_mode, EditorMode::Create | EditorMode::Update);
+        let is_editing = matches!(
+            self.editor_mode,
+            EditorMode::Create | EditorMode::Update | EditorMode::FieldUpdate
+        );
         let header_title = if self.show_explain {
             t!("MongoCollection.explain_result_title").to_string()
         } else if is_editing {
             match self.editor_mode {
                 EditorMode::Create => t!("MongoCollection.new_document").to_string(),
                 EditorMode::Update => t!("MongoCollection.edit_document").to_string(),
+                EditorMode::FieldUpdate => self
+                    .editing_field
+                    .as_ref()
+                    .map(|field| {
+                        t!("MongoCollection.edit_field", field = field.field.as_str()).to_string()
+                    })
+                    .unwrap_or_else(|| t!("MongoCollection.edit_document").to_string()),
                 EditorMode::View => t!("MongoCollection.document_detail").to_string(),
             }
         } else {
@@ -2638,64 +2860,95 @@ impl CollectionView {
             self.render_empty_state(t!("MongoCollection.select_document").as_ref(), cx)
         };
 
-        v_flex()
+        h_flex()
             .flex_1()
             .h_full()
             .min_h_0()
             .min_w(px(320.0))
-            .px_2()
-            .gap_2()
+            .border_l_1()
+            .border_color(cx.theme().border)
             .child(
-                h_flex()
+                v_flex()
+                    .h_full()
+                    .w(px(32.0))
+                    .flex_shrink_0()
                     .items_center()
-                    .justify_between()
+                    .py_1()
+                    .border_r_1()
+                    .border_color(cx.theme().border)
                     .child(
-                        div()
-                            .text_sm()
-                            .font_semibold()
-                            .text_color(cx.theme().foreground)
-                            .child(header_title),
-                    )
-                    .child(
-                        h_flex()
-                            .gap_2()
-                            .items_center()
-                            .when(is_editing, |this| {
-                                this.child(
-                                    Button::new("mongo-save")
-                                        .small()
-                                        .primary()
-                                        .label(t!("Common.save").to_string())
-                                        .on_click(cx.listener(|this, _, _window, cx| {
-                                            this.save_edit(cx);
-                                        })),
-                                )
-                                .child(
-                                    Button::new("mongo-cancel")
-                                        .small()
-                                        .outline()
-                                        .label(t!("Common.cancel").to_string())
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            this.cancel_edit(window, cx);
-                                        })),
-                                )
-                            })
-                            .when(!is_editing, |this| {
-                                this.child(
-                                    Button::new("mongo-copy")
-                                        .small()
-                                        .outline()
-                                        .icon(IconName::Copy)
-                                        .label(t!("Common.copy").to_string())
-                                        .disabled(self.selected_index.is_none())
-                                        .on_click(cx.listener(|this, _, _window, cx| {
-                                            this.copy_selected(cx);
-                                        })),
-                                )
-                            }),
+                        Button::new("mongo-collapse-preview")
+                            .xsmall()
+                            .ghost()
+                            .icon(IconName::ChevronRight)
+                            .tooltip(t!("MongoCollection.collapse_preview").to_string())
+                            .on_click(cx.listener(|this, _, _window, cx| {
+                                this.toggle_detail_panel(cx);
+                            })),
                     ),
             )
-            .child(body)
+            .child(
+                v_flex()
+                    .flex_1()
+                    .h_full()
+                    .min_h_0()
+                    .px_2()
+                    .gap_2()
+                    .child(
+                        h_flex()
+                            .items_center()
+                            .justify_between()
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_sm()
+                                    .font_semibold()
+                                    .text_color(cx.theme().foreground)
+                                    .child(header_title),
+                            )
+                            .child(
+                                h_flex()
+                                    .gap_2()
+                                    .items_center()
+                                    .when(is_editing, |this| {
+                                        this.child(
+                                            Button::new("mongo-save")
+                                                .small()
+                                                .primary()
+                                                .label(t!("Common.save").to_string())
+                                                .on_click(cx.listener(|this, _, _window, cx| {
+                                                    this.save_edit(cx);
+                                                })),
+                                        )
+                                        .child(
+                                            Button::new("mongo-cancel")
+                                                .small()
+                                                .outline()
+                                                .label(t!("Common.cancel").to_string())
+                                                .on_click(cx.listener(|this, _, window, cx| {
+                                                    this.cancel_edit(window, cx);
+                                                })),
+                                        )
+                                    })
+                                    .when(!is_editing, |this| {
+                                        this.child(
+                                            Button::new("mongo-copy")
+                                                .small()
+                                                .outline()
+                                                .icon(IconName::Copy)
+                                                .label(t!("Common.copy").to_string())
+                                                .disabled(self.selected_index.is_none())
+                                                .on_click(cx.listener(|this, _, _window, cx| {
+                                                    this.copy_selected(cx);
+                                                })),
+                                        )
+                                    }),
+                            ),
+                    )
+                    .child(body),
+            )
     }
 
     fn render_pagination_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -2930,5 +3183,196 @@ impl Render for CollectionView {
                 .child(self.render_tab_bar(cx))
                 .child(body)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::document_table_delegate::{
+        BsonCellValue, MongoDocumentTableDelegate, build_set_update_document,
+        collect_table_columns, parse_edit_cell_value, table_cell_text,
+    };
+    use mongodb::bson::{DateTime, doc, oid::ObjectId};
+
+    #[test]
+    fn parse_required_document_accepts_extended_json_and_preserves_bson_types() {
+        let document = parse_required_document(
+            r#"{
+              "_id": { "$oid": "6652a9a3f9347a5bbf9a1234" },
+              "createdAt": { "$date": "2026-05-24T08:00:00Z" },
+              "count": { "$numberLong": "42" }
+            }"#,
+            "Document",
+        )
+        .unwrap();
+
+        assert_eq!(
+            Some(&Bson::ObjectId(
+                ObjectId::parse_str("6652a9a3f9347a5bbf9a1234").unwrap()
+            )),
+            document.get("_id")
+        );
+        assert!(matches!(document.get("createdAt"), Some(Bson::DateTime(_))));
+        assert_eq!(Some(&Bson::Int64(42)), document.get("count"));
+    }
+
+    #[test]
+    fn parse_required_bson_value_accepts_extended_json_values() {
+        let date =
+            parse_required_bson_value(r#"{ "$date": "2026-05-24T08:00:00Z" }"#, "Field").unwrap();
+        let nested =
+            parse_required_bson_value(r#"{ "items": [1, { "$numberLong": "2" }] }"#, "Field")
+                .unwrap();
+
+        assert!(matches!(date, Bson::DateTime(_)));
+        assert!(matches!(nested, Bson::Document(_)));
+        let Bson::Document(document) = nested else {
+            unreachable!();
+        };
+        assert_eq!(
+            Some(&Bson::Array(vec![Bson::Int32(1), Bson::Int64(2)])),
+            document.get("items")
+        );
+    }
+
+    #[test]
+    fn document_to_pretty_json_outputs_extended_json() {
+        let document = doc! {
+            "_id": ObjectId::parse_str("6652a9a3f9347a5bbf9a1234").unwrap(),
+            "createdAt": DateTime::parse_rfc3339_str("2026-05-24T08:00:00Z").unwrap(),
+        };
+
+        let output = document_to_pretty_json(&document).unwrap();
+
+        assert!(output.contains("\"$oid\""));
+        assert!(output.contains("\"$date\""));
+    }
+
+    #[test]
+    fn table_columns_put_id_first_and_keep_first_seen_fields() {
+        let documents = vec![
+            doc! { "_id": 1, "name": "Alice", "age": 20 },
+            doc! { "email": "alice@example.com", "name": "Alice Updated" },
+        ];
+
+        assert_eq!(
+            vec![
+                "_id".to_string(),
+                "name".to_string(),
+                "age".to_string(),
+                "email".to_string()
+            ],
+            collect_table_columns(documents.iter())
+        );
+    }
+
+    #[test]
+    fn table_cell_text_formats_nested_values_and_missing_cells() {
+        let nested = Bson::Document(doc! { "enabled": true, "count": 2 });
+        let datetime = mongodb::bson::DateTime::parse_rfc3339_str("2026-05-24T08:00:00Z").unwrap();
+
+        assert_eq!("", table_cell_text(None));
+        assert_eq!(
+            "plain",
+            table_cell_text(Some(&Bson::String("plain".to_string())))
+        );
+        assert_eq!(
+            "2026-05-24T08:00:00Z",
+            table_cell_text(Some(&Bson::DateTime(datetime)))
+        );
+        assert_eq!(
+            "{\"enabled\":true,\"count\":2}",
+            table_cell_text(Some(&nested))
+        );
+    }
+
+    #[test]
+    fn parse_edit_cell_value_preserves_bson_scalar_types() {
+        let datetime = DateTime::parse_rfc3339_str("2026-05-24T08:00:00Z").unwrap();
+
+        assert_eq!(
+            Bson::String("updated".to_string()),
+            parse_edit_cell_value(Some(&Bson::String("old".to_string())), "updated").unwrap()
+        );
+        assert_eq!(
+            Bson::Int32(42),
+            parse_edit_cell_value(Some(&Bson::Int32(1)), "42").unwrap()
+        );
+        assert_eq!(
+            Bson::Int64(42),
+            parse_edit_cell_value(Some(&Bson::Int64(1)), "42").unwrap()
+        );
+        assert_eq!(
+            Bson::Double(42.5),
+            parse_edit_cell_value(Some(&Bson::Double(1.0)), "42.5").unwrap()
+        );
+        assert_eq!(
+            Bson::Boolean(false),
+            parse_edit_cell_value(Some(&Bson::Boolean(true)), "false").unwrap()
+        );
+        assert_eq!(
+            Bson::DateTime(datetime),
+            parse_edit_cell_value(Some(&datetime.into()), "2026-05-24T08:00:00Z").unwrap()
+        );
+    }
+
+    #[test]
+    fn parse_edit_cell_value_rejects_missing_and_complex_values() {
+        assert!(parse_edit_cell_value(None, "value").is_err());
+        assert!(
+            parse_edit_cell_value(Some(&Bson::Document(doc! { "nested": true })), "{}").is_err()
+        );
+        assert!(parse_edit_cell_value(Some(&Bson::Array(vec![Bson::Int32(1)])), "[1]").is_err());
+    }
+
+    #[test]
+    fn set_update_document_uses_mongodb_set_operator() {
+        assert_eq!(
+            doc! { "$set": { "name": "Alice" } },
+            build_set_update_document("name", Bson::String("Alice".to_string()))
+        );
+    }
+
+    #[test]
+    fn mongo_document_table_delegate_tracks_changed_bson_cells() {
+        let document = doc! { "_id": 1, "name": "Alice", "age": 20 };
+        let mut delegate = MongoDocumentTableDelegate::new(vec![document]);
+
+        assert!(delegate.record_cell_edit(0, "age", "21").unwrap());
+        assert_eq!(
+            vec![BsonCellValue {
+                row_index: 0,
+                field: "age".to_string(),
+                old_value: Bson::Int32(20),
+                new_value: Bson::Int32(21),
+            }],
+            delegate.cell_changes()
+        );
+        assert!(delegate.record_cell_edit(0, "age", "20").unwrap());
+        assert!(delegate.cell_changes().is_empty());
+    }
+
+    #[test]
+    fn mongo_document_table_delegate_exposes_complex_fields_for_detail_editing() {
+        let document = doc! {
+            "_id": 1,
+            "profile": { "email": "alice@example.com" },
+            "name": "Alice",
+            "bad.name": { "nested": true },
+            "$bad": { "nested": true },
+        };
+        let delegate = MongoDocumentTableDelegate::new(vec![document]);
+
+        assert_eq!(Some("profile"), delegate.field_name_at(1));
+        assert_eq!(
+            Some(&Bson::Document(doc! { "email": "alice@example.com" })),
+            delegate.value_at(0, 1)
+        );
+        assert!(delegate.is_detail_editable_field(0, 1));
+        assert!(!delegate.is_detail_editable_field(0, 0));
+        assert!(!delegate.is_detail_editable_field(0, 2));
+        assert!(!delegate.is_detail_editable_field(0, 3));
+        assert!(!delegate.is_detail_editable_field(0, 4));
     }
 }
