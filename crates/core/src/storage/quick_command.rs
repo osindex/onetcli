@@ -169,7 +169,7 @@ impl QuickCommandRepository {
                      WHERE connection_id IS NULL
                      ORDER BY pinned DESC, sort_order ASC, created_at DESC"
                 )?;
-                let rows = stmt.query_map([], |row| QuickCommandRow::from_row(row))?;
+                let rows = stmt.query_map([], QuickCommandRow::from_row)?;
                 for row in rows {
                     results.push(row?.into());
                 }
@@ -353,7 +353,7 @@ impl Repository for QuickCommandRepository {
             let mut stmt = conn.prepare(
                 "SELECT id, name, command, description, pinned, sort_order, connection_id, created_at, updated_at FROM quick_commands ORDER BY pinned DESC, sort_order ASC, created_at DESC",
             )?;
-            let rows = stmt.query_map([], |row| QuickCommandRow::from_row(row))?;
+            let rows = stmt.query_map([], QuickCommandRow::from_row)?;
             let mut results = Vec::new();
             for row in rows {
                 results.push(row?.into());

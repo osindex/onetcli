@@ -101,8 +101,8 @@ impl ProviderRepository {
 
         if let Some(mut existing) = list
             .iter()
-            .cloned()
             .find(|p| p.provider_type == ProviderType::OnetCli)
+            .cloned()
         {
             if !existing.enabled {
                 existing.enabled = true;
@@ -254,7 +254,7 @@ impl Repository for ProviderRepository {
             let mut stmt = conn.prepare(
                 "SELECT id, name, provider_type, api_key, api_base, api_version, model, models, max_tokens, temperature, enabled, is_default, created_at, updated_at FROM llm_providers ORDER BY created_at DESC",
             )?;
-            let rows = stmt.query_map([], |row| ProviderConfigRow::from_row(row))?;
+            let rows = stmt.query_map([], ProviderConfigRow::from_row)?;
             let mut results = Vec::new();
             for row in rows {
                 results.push(row?.try_into()?);

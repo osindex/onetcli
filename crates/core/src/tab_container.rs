@@ -644,14 +644,14 @@ impl ListDelegate for TabListDelegate {
         window: &mut Window,
         cx: &mut Context<ListState<Self>>,
     ) {
-        if let Some(ix) = self.selected_index {
-            if let Some((tab_index, _, _, _)) = self.filtered_tabs.get(ix.row) {
-                let tab_index = *tab_index;
-                self.container.update(cx, |this, cx| {
-                    this.list_popover_open = false;
-                    this.set_active_index(tab_index, window, cx);
-                });
-            }
+        if let Some(ix) = self.selected_index
+            && let Some((tab_index, _, _, _)) = self.filtered_tabs.get(ix.row)
+        {
+            let tab_index = *tab_index;
+            self.container.update(cx, |this, cx| {
+                this.list_popover_open = false;
+                this.set_active_index(tab_index, window, cx);
+            });
         }
     }
 
@@ -942,11 +942,11 @@ impl TabContainer {
         cx.spawn(async move |_handle, cx| {
             let can_close = close_task.await;
             if can_close {
-                let _ = entity.update(cx, |this, cx| {
+                entity.update(cx, |this, cx| {
                     this.do_remove_tab_by_id(&tab_id_string, cx);
                 });
             } else {
-                let _ = entity.update(cx, |this, _cx| {
+                entity.update(cx, |this, _cx| {
                     this.closing_tabs.remove(&tab_id);
                 });
             }
@@ -968,10 +968,8 @@ impl TabContainer {
                 }
             } else if index < self.active_index {
                 self.active_index -= 1;
-            } else if index == self.active_index {
-                if self.active_index >= self.tabs.len() {
-                    self.active_index = self.tabs.len() - 1;
-                }
+            } else if index == self.active_index && self.active_index >= self.tabs.len() {
+                self.active_index = self.tabs.len() - 1;
             }
 
             cx.emit(TabContainerEvent::TabClosed {
@@ -1029,7 +1027,7 @@ impl TabContainer {
                         if !can_close {
                             return false;
                         }
-                        let _ = entity.update(cx, |this, cx| {
+                        entity.update(cx, |this, cx| {
                             this.do_remove_tab_by_id(&tab_id, cx);
                         });
                     }
@@ -1078,7 +1076,7 @@ impl TabContainer {
                         if !can_close {
                             return false;
                         }
-                        let _ = entity.update(cx, |this, cx| {
+                        entity.update(cx, |this, cx| {
                             this.do_remove_tab_by_id(&tab_id, cx);
                         });
                     }
@@ -1137,7 +1135,7 @@ impl TabContainer {
                         if !can_close {
                             return false;
                         }
-                        let _ = entity.update(cx, |this, cx| {
+                        entity.update(cx, |this, cx| {
                             this.do_remove_tab_by_id(&tab_id, cx);
                         });
                     }
@@ -1196,7 +1194,7 @@ impl TabContainer {
                         if !can_close {
                             return false;
                         }
-                        let _ = entity.update(cx, |this, cx| {
+                        entity.update(cx, |this, cx| {
                             this.do_remove_tab_by_id(&tab_id, cx);
                         });
                     }
@@ -1264,7 +1262,7 @@ impl TabContainer {
                         if !can_close {
                             return false;
                         }
-                        let _ = entity.update(cx, |this, cx| {
+                        entity.update(cx, |this, cx| {
                             this.do_remove_tab_by_id(&tab_id, cx);
                         });
                     }
@@ -1364,8 +1362,8 @@ impl TabContainer {
     fn dump_config(&self) -> TabContainerConfig {
         TabContainerConfig {
             size: Some(self.size_to_string()),
-            left_padding: self.left_padding.map(|p| f32::from(p)),
-            top_padding: self.top_padding.map(|p| f32::from(p)),
+            left_padding: self.left_padding.map(f32::from),
+            top_padding: self.top_padding.map(f32::from),
         }
     }
 
@@ -2039,10 +2037,8 @@ impl TabContainer {
 
 impl Focusable for TabContainer {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
-        if self.pinned_tab_active {
-            if let Some(pinned) = &self.pinned_tab {
+        if self.pinned_tab_active && let Some(pinned) = &self.pinned_tab {
                 return pinned.content().focus_handle(cx);
-            }
         }
         if let Some(active_tab) = self.active_tab() {
             active_tab.content().focus_handle(cx)

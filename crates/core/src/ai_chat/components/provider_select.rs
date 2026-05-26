@@ -500,7 +500,7 @@ impl ProviderSelectState {
         if models.is_empty() {
             return None;
         }
-        if models.iter().any(|m| *m == provider.model) {
+        if models.contains(&provider.model) {
             Some(provider.model.clone())
         } else {
             Some(models[0].clone())
@@ -583,6 +583,7 @@ impl ProviderSelectState {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn render_selector_column(
         column_id: &str,
         title: String,

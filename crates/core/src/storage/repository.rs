@@ -213,7 +213,7 @@ impl Repository for ConnectionRepository {
             let mut stmt = conn.prepare(
                 "SELECT id, name, connection_type, params, workspace_id, selected_databases, remark, sync_enabled, cloud_id, last_synced_at, created_at, updated_at, team_id, owner_id FROM connections ORDER BY updated_at DESC",
             )?;
-            let rows = stmt.query_map([], |row| ConnectionRow::from_row(row))?;
+            let rows = stmt.query_map([], ConnectionRow::from_row)?;
             let mut results = Vec::new();
             for row in rows {
                 results.push(row?.into());
@@ -259,7 +259,7 @@ impl ConnectionRepository {
                     results.push(row?.into());
                 }
             } else {
-                let rows = stmt.query_map([], |row| ConnectionRow::from_row(row))?;
+                let rows = stmt.query_map([], ConnectionRow::from_row)?;
                 for row in rows {
                     results.push(row?.into());
                 }
@@ -295,7 +295,7 @@ impl ConnectionRepository {
                  WHERE sync_enabled = 1 AND (cloud_id IS NULL OR updated_at > COALESCE(last_synced_at, 0))
                  ORDER BY updated_at DESC",
             )?;
-            let rows = stmt.query_map([], |row| ConnectionRow::from_row(row))?;
+            let rows = stmt.query_map([], ConnectionRow::from_row)?;
             let mut results = Vec::new();
             for row in rows {
                 results.push(row?.into());
@@ -367,7 +367,7 @@ impl ConnectionRepository {
             let mut stmt = conn.prepare(
                 "SELECT id, name, connection_type, params, workspace_id, selected_databases, remark, sync_enabled, cloud_id, last_synced_at, created_at, updated_at, team_id, owner_id FROM connections WHERE team_id IS NULL ORDER BY updated_at DESC",
             )?;
-            let rows = stmt.query_map([], |row| ConnectionRow::from_row(row))?;
+            let rows = stmt.query_map([], ConnectionRow::from_row)?;
             let mut results = Vec::new();
             for row in rows {
                 results.push(row?.into());

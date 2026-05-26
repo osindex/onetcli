@@ -144,6 +144,7 @@ impl JsonRpcClient {
             send_msg_async(&mut *writer, &request).await
         };
         if let Err(error) = send_result {
+            close_and_drain(&self.shared);
             return Err(DbError::query_with_source(
                 "failed to write IPC request",
                 error,

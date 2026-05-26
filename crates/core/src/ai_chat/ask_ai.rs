@@ -99,10 +99,10 @@ impl AskAiButton {
         .to_string();
 
         if let Some(ctx) = &self.context {
-            message.push_str(&t!("AiChat.ask_ai_context", context = ctx).to_string());
+            message.push_str(t!("AiChat.ask_ai_context", context = ctx).as_ref());
         }
 
-        message.push_str(&t!("AiChat.ask_ai_request_help").to_string());
+        message.push_str(t!("AiChat.ask_ai_request_help").as_ref());
         message
     }
 }

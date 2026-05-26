@@ -188,7 +188,7 @@ impl Repository for SessionRepository {
     fn list(&self) -> Result<Vec<Self::Entity>> {
         self.conn.with_connection(|conn| {
             let mut stmt = conn.prepare("SELECT id, name, provider_id, created_at, updated_at FROM chat_sessions ORDER BY updated_at DESC")?;
-            let rows = stmt.query_map([], |row| ChatSession::from_row(row))?;
+            let rows = stmt.query_map([], ChatSession::from_row)?;
             let mut results = Vec::new();
             for row in rows {
                 results.push(row?);
@@ -307,7 +307,7 @@ impl Repository for MessageRepository {
     fn list(&self) -> Result<Vec<Self::Entity>> {
         self.conn.with_connection(|conn| {
             let mut stmt = conn.prepare("SELECT id, session_id, role, content, created_at FROM chat_messages ORDER BY created_at ASC")?;
-            let rows = stmt.query_map([], |row| ChatMessage::from_row(row))?;
+            let rows = stmt.query_map([], ChatMessage::from_row)?;
             let mut results = Vec::new();
             for row in rows {
                 results.push(row?);

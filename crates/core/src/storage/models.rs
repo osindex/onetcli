@@ -494,7 +494,7 @@ impl DbConnectionConfig {
 
     pub fn server_info(&self) -> String {
         match self.database_type {
-            DatabaseType::SQLite | DatabaseType::DuckDB => format!("{}", self.host),
+            DatabaseType::SQLite | DatabaseType::DuckDB => self.host.to_string(),
             _ => format!("{}:{}", self.host, self.port),
         }
     }
@@ -810,7 +810,7 @@ impl StoredConnection {
 
     pub fn from_db_connection(connection: DbConnectionConfig) -> Self {
         let name = connection.name.clone();
-        let workspace_id = connection.workspace_id.clone();
+        let workspace_id = connection.workspace_id;
         Self::new_database(name, connection, workspace_id)
     }
 

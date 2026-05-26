@@ -141,9 +141,9 @@ impl AgentDispatcher {
         rx
     }
 
-    fn fallback_agent<'a>(
+    fn fallback_agent(
         user_input: &str,
-        available: &[&'a DynAgent],
+        available: &[&DynAgent],
         affinity: &SessionAffinity,
         error: &impl std::fmt::Display,
     ) -> DynAgent {

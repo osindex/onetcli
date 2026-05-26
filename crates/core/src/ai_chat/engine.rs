@@ -214,8 +214,7 @@ impl<E: MessageExtension + Default> ChatEngine<E> {
             if msg.content.is_empty() {
                 msg.content = t!("AiChat.operation_cancelled").to_string();
             } else {
-                msg.content
-                    .push_str(&t!("AiChat.operation_cancelled_markdown").to_string());
+                msg.content.push_str(t!("AiChat.operation_cancelled_markdown").as_ref());
             }
         }
     }

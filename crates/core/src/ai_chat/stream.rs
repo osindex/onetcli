@@ -91,6 +91,7 @@ impl ChatStreamProcessor {
     ///
     /// 此方法在 tokio 运行时中执行流式请求，并通过 mpsc channel 发送事件。
     /// 调用者可以通过 cancel_token 取消请求。
+    #[allow(clippy::too_many_arguments)]
     pub async fn start(
         provider_id: i64,
         selected_model: Option<String>,
@@ -134,6 +135,7 @@ impl ChatStreamProcessor {
     /// 创建流式对话（不自动 spawn，适用于 GPUI 环境）
     ///
     /// 返回 (Receiver, Future)，调用者需要自行 spawn Future
+    #[allow(clippy::too_many_arguments)]
     pub fn create_stream(
         provider_id: i64,
         selected_model: Option<String>,
@@ -178,6 +180,7 @@ impl ChatStreamProcessor {
     }
 
     /// 执行流式请求（内部实现）
+    #[allow(clippy::too_many_arguments)]
     async fn run_stream(
         provider_id: i64,
         selected_model: Option<String>,
