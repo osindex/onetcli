@@ -32,11 +32,6 @@ jobs:
             binary: onetcli
             archive: onetcli-x86_64-apple-darwin.tar.gz
             package: macos
-          - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
-            binary: onetcli
-            archive: onetcli-x86_64-unknown-linux-gnu.tar.gz
-            package: linux
           - target: x86_64-pc-windows-msvc
             os: windows-latest
             binary: onetcli.exe
@@ -80,10 +75,6 @@ jobs:
           remove_path /System/Library/Frameworks/Python.framework
 
           df -h
-
-      - name: Install system dependencies (Linux)
-        if: runner.os == 'Linux'
-        run: script/bootstrap
 
       - name: Install system dependencies (macOS)
         if: runner.os == 'macOS'
@@ -137,21 +128,6 @@ jobs:
           script/bundle-macos.sh ${{ matrix.target }}
           script/bundle-macos-dmg.sh ${{ matrix.target }}
           tar czf ${{ matrix.archive }} -C target OnetCli.app
-
-      - name: Package (Linux)
-        if: matrix.package == 'linux'
-        run: |
-          mkdir -p package/usr/bin
-          mkdir -p package/usr/share/applications
-          mkdir -p package/usr/share/icons/hicolor/128x128/apps
-          mkdir -p package/usr/share/icons/hicolor/256x256/apps
-          mkdir -p package/usr/share/icons/hicolor/512x515/apps
-          cp target/${{ matrix.target }}/release/${{ matrix.binary }} package/usr/bin/
-          cp resources/linux/onetcli.desktop package/usr/share/applications/
-          cp resources/linux/onetcli-128.png package/usr/share/icons/hicolor/128x128/apps/onetcli.png
-          cp resources/linux/onetcli-256.png package/usr/share/icons/hicolor/256x256/apps/onetcli.png
-          cp resources/linux/onetcli-512.png package/usr/share/icons/hicolor/512x515/apps/onetcli.png
-          tar czf ${{ matrix.archive }} -C package .
 
       - name: Package (Windows)
         if: matrix.package == 'windows'
