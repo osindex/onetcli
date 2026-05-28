@@ -382,11 +382,6 @@ impl SyncEngine {
         Ok(result)
     }
 
-    /// 解密云端数据建立 cloud_id → name 映射
-    fn build_cloud_name_map(&self, cloud_data_list: &[CloudSyncData]) -> HashMap<String, String> {
-        self.build_cloud_decrypted_map(cloud_data_list).0
-    }
-
     /// 解密云端数据，同时建立两份映射：
     /// - `cloud_id → connection_name`
     /// - `cloud_id → workspace_cloud_id`（连接所属工作区的云端 ID，可能为空）
